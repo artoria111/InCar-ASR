@@ -1,0 +1,1 @@
+recording_id,file_path,category,recorded_at,duration_seconds,sample_rate,channels,device,vehicle_state,speed_kmh,road_surface,weather,window_state,microphone_position,location_type,source_type,source_url,license,contains_speech,rms_dbfs,peak_dbfs,clipped_ratio,notes

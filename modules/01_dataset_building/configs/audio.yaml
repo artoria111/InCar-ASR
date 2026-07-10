@@ -1,0 +1,52 @@
+version: 1
+
+audio:
+  sample_rate: 16000
+  channels: 1
+  subtype: PCM_16
+
+collection:
+  raw_audio_dir: data/raw
+  metadata_file: data/metadata.csv
+  default_duration_seconds: 30
+  categories:
+    - engine_idle
+    - engine_acceleration
+    - road_asphalt
+    - road_concrete
+    - tire_noise
+    - wind_noise
+    - air_conditioner
+    - rain
+    - horn_and_traffic
+    - cabin_music
+    - cabin_speech
+    - window_open
+
+preprocessing:
+  output_dir: data/processed
+  remove_dc_offset: true
+  # Disabled by default so that useful low-frequency vehicle noise is preserved.
+  highpass_hz: 0
+  trim_silence: false
+  silence_threshold_dbfs: -50
+  # Preserve natural recording levels for later SNR-controlled mixing.
+  normalize_rms: false
+  target_rms_dbfs: -25
+  peak_limit_dbfs: -1
+  segment_seconds: 10
+  hop_seconds: 10
+  pad_last_segment: true
+  minimum_tail_seconds: 2
+  # All segments from one source recording are assigned to the same split.
+  dataset_splits:
+    train: 0.8
+    validation: 0.1
+    test: 0.1
+
+validation:
+  minimum_duration_seconds: 2
+  maximum_clipped_ratio: 0.001
+  minimum_rms_dbfs: -55
+  maximum_dc_offset: 0.02
+  minimum_category_count: 10

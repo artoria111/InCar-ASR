@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# IDE and operating system
+.DS_Store
+.idea/
+.vscode/
+
+# Audio data and generated reports
+modules/01_dataset_building/data/raw/
+modules/01_dataset_building/data/processed/
+modules/01_dataset_building/data/external/
+modules/01_dataset_building/data/metadata.csv
+reports/
+*.wav
+*.flac
