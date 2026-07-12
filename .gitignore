@@ -20,3 +20,19 @@ modules/01_dataset_building/data/metadata.csv
 reports/
 *.wav
 *.flac
+
+# Model files (large binaries)
+*.onnx
+*.om
+*.npy
+*.npz
+*.pt
+models/
+outputs/
+modules/*/outputs/
+
+# AISHELL dataset
+data/
+
+# Reporting
+/汇报/
