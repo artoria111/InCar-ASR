@@ -1,0 +1,21 @@
+build/
+*.o
+*.so
+*.a
+.idea/
+.vscode/
+*.swp
+*.swo
+__pycache__/
+*.pyc
+model/*.om
+model/*.onnx
+profile_output/
+*.prof
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+# ATC compiler temp
+kernel_meta*/
+kernel_meta_*/
