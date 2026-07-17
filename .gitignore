@@ -31,8 +31,17 @@ models/
 outputs/
 modules/*/outputs/
 
-# AISHELL dataset
-data/
+# AISHELL dataset (large audio files)
+data/data_aishell/
+data/*.tgz
+data/*.aria2
+
+# Model outputs (large ONNX/PT files)
+modules/*/outputs/*.onnx
+modules/*/outputs/*.pt
+modules/*/outputs/*.npy
+modules/*/outputs/*.npz
 
 # Reporting
 /汇报/
+.claude/
