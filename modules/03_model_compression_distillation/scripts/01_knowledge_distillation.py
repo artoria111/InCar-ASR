@@ -1,243 +1,261 @@
 #!/usr/bin/env python3
-"""
-知识蒸馏: Paraformer-large (Teacher) → Paraformer-tiny (Student)
+"""Distill a FunASR Paraformer teacher into a student using cached features."""
 
-实现三种蒸馏损失:
-  1. Logits 蒸馏 (KL 散度) — 教师和学生输出分布对齐
-  2. 中间层特征蒸馏 (MSE) — 编码器隐藏状态对齐
-  3. 注意力矩阵蒸馏 — 注意力权重对齐
+from __future__ import annotations
 
-Usage:
-  uv run python modules/03_model_compression_distillation/scripts/01_knowledge_distillation.py
-"""
+import argparse
+import hashlib
+import json
+import time
+from pathlib import Path
 
-import argparse, os, sys, json, time
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-# ============================================================
-# 蒸馏损失
-# ============================================================
-class DistillationLoss(nn.Module):
-    """组合蒸馏损失"""
-
-    def __init__(self, temperature=4.0, alpha_kl=0.5, alpha_hid=0.3, alpha_att=0.2):
-        super().__init__()
-        self.T = temperature
-        self.alpha_kl = alpha_kl      # Logits 蒸馏权重
-        self.alpha_hid = alpha_hid    # 特征蒸馏权重
-        self.alpha_att = alpha_att    # 注意力蒸馏权重
-        self.kl_loss = nn.KLDivLoss(reduction="batchmean")
-        self.mse_loss = nn.MSELoss()
-
-    def forward(self, student_out, teacher_out,
-                student_hidden=None, teacher_hidden=None,
-                student_att=None, teacher_att=None):
-        losses = {}
-
-        # 1. Logits 蒸馏 (KL 散度)
-        s_logits = F.log_softmax(student_out / self.T, dim=-1)
-        t_logits = F.softmax(teacher_out / self.T, dim=-1)
-        losses["kl"] = self.kl_loss(s_logits, t_logits) * (self.T ** 2)
-        total = self.alpha_kl * losses["kl"]
-
-        # 2. 中间层特征蒸馏 (MSE)
-        if student_hidden is not None and teacher_hidden is not None:
-            losses["hidden"] = self.mse_loss(student_hidden, teacher_hidden)
-            total += self.alpha_hid * losses["hidden"]
-
-        # 3. 注意力蒸馏
-        if student_att is not None and teacher_att is not None:
-            losses["attention"] = self.mse_loss(student_att, teacher_att)
-            total += self.alpha_att * losses["attention"]
-
-        return total, losses
+from torch.utils.data import DataLoader, Dataset
 
 
-# ============================================================
-# 蒸馏训练器
-# ============================================================
-class KnowledgeDistiller:
-    """知识蒸馏训练封装"""
+class FeatureCache(Dataset):
+    def __init__(self, path: Path):
+        cache = np.load(path, allow_pickle=False)
+        self.features = cache["features"]
+        self.feature_lengths = cache["feature_lengths"]
+        self.token_ids = cache["token_ids"]
+        self.token_lengths = cache["token_lengths"]
 
-    def __init__(self, teacher_model, student_model, device="cuda:0"):
-        self.teacher = teacher_model.to(device).eval()
-        self.student = student_model.to(device).train()
-        self.device = device
+    def __len__(self) -> int:
+        return len(self.feature_lengths)
 
-        # 冻结教师模型
-        for p in self.teacher.parameters():
-            p.requires_grad = False
-
-    def distill_step(self, feats, feat_lens, optimizer, dist_loss, ctc_loss, ce_loss):
-        """单步蒸馏训练"""
-        feats = feats.to(self.device)
-        feat_lens = feat_lens.to(self.device)
-
-        # 教师前向 (no grad)
-        with torch.no_grad():
-            t_enc, t_enc_lens = self.teacher.encode(feats, feat_lens)
-            if isinstance(t_enc, tuple): t_enc = t_enc[0]
-            # 教师decoder输出作为软标签
-            t_pred = self.teacher.calc_predictor(t_enc, t_enc_lens)
-            t_dec, _ = self.teacher.cal_decoder_with_predictor(
-                t_enc, t_enc_lens, t_pred[0], t_pred[1].round().long())
-
-        # 学生前向
-        s_enc, s_enc_lens = self.student.encode(feats, feat_lens)
-        if isinstance(s_enc, tuple): s_enc = s_enc[0]
-        s_pred = self.student.calc_predictor(s_enc, s_enc_lens)
-        s_dec, _ = self.student.cal_decoder_with_predictor(
-            s_enc, s_enc_lens, s_pred[0], s_pred[1].round().long())
-
-        # 蒸馏损失
-        d_loss, d_dict = dist_loss(
-            s_dec, t_dec[0],
-            student_hidden=s_enc, teacher_hidden=t_enc
+    def __getitem__(self, index: int):
+        feature_length = int(self.feature_lengths[index])
+        token_length = int(self.token_lengths[index])
+        return (
+            torch.from_numpy(self.features[index, :feature_length].copy()),
+            torch.from_numpy(self.token_ids[index, :token_length].copy()),
         )
 
-        optimizer.zero_grad()
-        d_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.student.parameters(), 5.0)
-        optimizer.step()
 
-        return d_loss.item(), d_dict
+def collate(batch):
+    features, targets = zip(*batch)
+    feature_lengths = torch.tensor([len(item) for item in features])
+    target_lengths = torch.tensor([len(item) for item in targets])
+    padded_features = nn.utils.rnn.pad_sequence(features, batch_first=True)
+    padded_targets = nn.utils.rnn.pad_sequence(targets, batch_first=True)
+    return padded_features, feature_lengths, padded_targets, target_lengths
 
-    def save_checkpoint(self, path):
-        torch.save({"model_state_dict": self.student.state_dict()}, path)
+
+def encoder_output(model, features, feature_lengths):
+    encoded = model.encode(features, feature_lengths)
+    hidden, lengths = encoded[0], encoded[1]
+    if isinstance(hidden, tuple):
+        hidden = hidden[0]
+    return hidden, lengths
 
 
-# ============================================================
-# ONNX 精度校验
-# ============================================================
-def verify_onnx_accuracy(pytorch_model, onnx_path, test_feats, test_lens, rtol=1e-3):
-    """
-    校验 ONNX 模型与 PyTorch 模型的输出精度。
+def ctc_logits(model, hidden):
+    if not hasattr(model, "ctc") or not hasattr(model.ctc, "ctc_lo"):
+        raise RuntimeError("model does not expose the expected FunASR CTC head")
+    return model.ctc.ctc_lo(hidden)
 
-    返回逐层余弦相似度报告。
-    """
-    import onnxruntime as ort
 
-    session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
-    # PyTorch 前向
-    with torch.no_grad():
-        pt_out = pytorch_model.encode(test_feats, test_lens)
-        if isinstance(pt_out, tuple): pt_out = pt_out[0]
-        pt_out = pt_out.numpy()
 
-    # ONNX 前向
-    onnx_out = session.run(None, {"speech": test_feats.numpy()})[0]
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--teacher", required=True, help="FunASR hub ID or local path")
+    parser.add_argument("--student", required=True, help="FunASR hub ID or local path")
+    parser.add_argument("--train-cache", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--temperature", type=float, default=4.0)
+    parser.add_argument("--ctc-weight", type=float, default=1.0)
+    parser.add_argument("--kl-weight", type=float, default=0.5)
+    parser.add_argument("--hidden-weight", type=float, default=0.3)
+    parser.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
+    return parser.parse_args()
 
-    # 余弦相似度
-    pt_flat = pt_out.reshape(-1)
-    onnx_flat = onnx_out.reshape(-1)
-    cos_sim = np.dot(pt_flat, onnx_flat) / (
-        np.linalg.norm(pt_flat) * np.linalg.norm(onnx_flat) + 1e-10
+
+def main() -> None:
+    args = parse_args()
+    if args.epochs < 1 or args.batch_size < 1:
+        raise SystemExit("epochs and batch size must be positive")
+
+    from funasr import AutoModel
+
+    device = torch.device(args.device)
+    teacher_wrapper = AutoModel(model=args.teacher, device="cpu", disable_update=True)
+    student_wrapper = AutoModel(model=args.student, device="cpu", disable_update=True)
+    teacher = teacher_wrapper.model.to(device).eval()
+    student = student_wrapper.model.to(device).train()
+    for parameter in teacher.parameters():
+        parameter.requires_grad = False
+
+    dataset = FeatureCache(args.train_cache)
+    if not len(dataset):
+        raise RuntimeError("training cache is empty")
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate,
+        num_workers=0,
     )
 
-    # 逐帧对比
-    max_diff = np.max(np.abs(pt_out - onnx_out))
-    mean_diff = np.mean(np.abs(pt_out - onnx_out))
+    probe_features, probe_lengths, _, _ = next(iter(loader))
+    probe_features = probe_features.to(device)
+    probe_lengths = probe_lengths.to(device)
+    with torch.no_grad():
+        teacher_hidden, _ = encoder_output(teacher, probe_features, probe_lengths)
+        student_hidden, _ = encoder_output(student, probe_features, probe_lengths)
+        teacher_vocab = ctc_logits(teacher, teacher_hidden).shape[-1]
+        student_vocab = ctc_logits(student, student_hidden).shape[-1]
 
-    return {
-        "cosine_similarity": float(cos_sim),
-        "max_absolute_diff": float(max_diff),
-        "mean_absolute_diff": float(mean_diff),
-        "is_valid": cos_sim > 0.999 and max_diff < 1e-2,
+    hidden_adapter: nn.Module
+    if student_hidden.shape[-1] == teacher_hidden.shape[-1]:
+        hidden_adapter = nn.Identity()
+    else:
+        hidden_adapter = nn.Linear(
+            student_hidden.shape[-1], teacher_hidden.shape[-1], bias=False
+        ).to(device)
+
+    trainable = list(student.parameters()) + list(hidden_adapter.parameters())
+    optimizer = torch.optim.AdamW(
+        trainable, lr=args.learning_rate, weight_decay=1e-5
+    )
+    supervised_ctc = nn.CTCLoss(blank=0, zero_infinity=True)
+    history = []
+
+    for epoch in range(1, args.epochs + 1):
+        totals = {"loss": 0.0, "ctc": 0.0, "kl": 0.0, "hidden": 0.0}
+        batches = 0
+        for features, feature_lengths, targets, target_lengths in loader:
+            features = features.to(device)
+            feature_lengths = feature_lengths.to(device)
+            targets = targets.to(device)
+            target_lengths = target_lengths.to(device)
+            if int(targets.max()) >= student_vocab:
+                raise RuntimeError(
+                    "cache token IDs do not belong to the student vocabulary"
+                )
+
+            with torch.no_grad():
+                teacher_hidden, teacher_lengths = encoder_output(
+                    teacher, features, feature_lengths
+                )
+                teacher_scores = ctc_logits(teacher, teacher_hidden)
+
+            student_hidden, student_lengths = encoder_output(
+                student, features, feature_lengths
+            )
+            student_scores = ctc_logits(student, student_hidden)
+            ctc_loss = supervised_ctc(
+                F.log_softmax(student_scores, dim=-1).transpose(0, 1),
+                targets,
+                student_lengths,
+                target_lengths,
+            )
+
+            shared_time = min(student_scores.shape[1], teacher_scores.shape[1])
+            projected = hidden_adapter(student_hidden[:, :shared_time])
+            hidden_loss = F.mse_loss(
+                projected, teacher_hidden[:, :shared_time].detach()
+            )
+
+            if student_vocab == teacher_vocab:
+                temperature = args.temperature
+                kl_loss = F.kl_div(
+                    F.log_softmax(
+                        student_scores[:, :shared_time] / temperature, dim=-1
+                    ),
+                    F.softmax(
+                        teacher_scores[:, :shared_time] / temperature, dim=-1
+                    ),
+                    reduction="batchmean",
+                ) * temperature**2
+            else:
+                kl_loss = student_scores.new_zeros(())
+
+            loss = (
+                args.ctc_weight * ctc_loss
+                + args.hidden_weight * hidden_loss
+                + args.kl_weight * kl_loss
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(trainable, 5.0)
+            optimizer.step()
+
+            for name, value in (
+                ("loss", loss),
+                ("ctc", ctc_loss),
+                ("kl", kl_loss),
+                ("hidden", hidden_loss),
+            ):
+                totals[name] += float(value.detach())
+            batches += 1
+
+        epoch_result = {
+            "epoch": epoch,
+            **{name: value / max(1, batches) for name, value in totals.items()},
+        }
+        history.append(epoch_result)
+        print(json.dumps(epoch_result, ensure_ascii=False))
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = args.output_dir / "student-distilled.pt"
+    torch.save(
+        {
+            "model_state_dict": student.state_dict(),
+            "hidden_adapter_state_dict": hidden_adapter.state_dict(),
+            "teacher": args.teacher,
+            "student": args.student,
+            "student_vocab": student_vocab,
+            "teacher_vocab": teacher_vocab,
+        },
+        checkpoint_path,
+    )
+    report = {
+        "schema_version": 1,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "status": "training_completed",
+        "teacher": args.teacher,
+        "student": args.student,
+        "cache": {
+            "path": str(args.train_cache.resolve()),
+            "sha256": sha256(args.train_cache),
+            "samples": len(dataset),
+        },
+        "checkpoint": {
+            "path": str(checkpoint_path.resolve()),
+            "sha256": sha256(checkpoint_path),
+        },
+        "configuration": vars(args) | {
+            "train_cache": str(args.train_cache),
+            "output_dir": str(args.output_dir),
+        },
+        "vocabulary": {
+            "teacher": teacher_vocab,
+            "student": student_vocab,
+            "logit_distillation_enabled": teacher_vocab == student_vocab,
+        },
+        "history": history,
+        "evaluation_status": "pending",
     }
-
-
-# ============================================================
-# 模型压缩报告生成
-# ============================================================
-def generate_compression_report(output_path: str, stage_results: dict):
-    """生成 Markdown 格式的模型压缩报告"""
-    report = f"""# 模型压缩报告
-
-> 生成时间: {time.strftime('%Y-%m-%d %H:%M')}
-
----
-
-## 1. 压缩策略
-
-采用**二级压缩**策略:
-
-```
-Paraformer-large (220M)
-    ↓ 知识蒸馏 (温度 T=4.0, KL+MSE+Attention)
-Paraformer-tiny (5.2M)
-    ↓ INT8 PTQ (AMCT)
-OM 离线模型 (< 50MB)
-```
-
-## 2. 各阶段对比
-
-| 阶段 | 参数量 | 模型体积 | CER (AISHELL-1) | 推理速度 |
-|------|:------:|:------:|:-----:|:------:|
-| Teacher (Paraformer-large) | 220M | 881MB | 1.95% | RTF 0.025 |
-| Student (Paraformer-tiny) | 5.2M | 21MB | — | RTF 0.004 |
-| INT8 Quantized | 5.2M | <50MB* | — | RTF <0.1* |
-
-> *INT8 量化需在昇腾 AMCT 工具链上完成（当前开发板内存不足，需交叉编译）
-
-## 3. 知识蒸馏配置
-
-| 超参数 | 值 | 说明 |
-|------|:--:|------|
-| 温度 T | 4.0 | 软化概率分布 |
-| KL 权重 | 0.5 | Logits 蒸馏 |
-| 特征权重 | 0.3 | 隐藏层 MSE |
-| 注意力权重 | 0.2 | 注意力矩阵 |
-| 优化器 | AdamW | lr=1e-4, wd=1e-5 |
-| 训练轮数 | 20 | Cosine LR |
-
-## 4. ONNX 精度校验
-
-| 指标 | 值 | 说明 |
-|------|:--:|------|
-| 余弦相似度 | > 0.999 | PyTorch vs ONNX 输出 |
-| 最大绝对误差 | < 1e-3 | 逐元素对比 |
-| 是否通过 | ✅ | 精度无损 |
-
-## 5. 下一步
-
-1. ASCEND AMCT INT8 PTQ 量化（需交叉编译环境）
-2. ATC 转换为 OM 离线模型
-3. NPU 端侧推理性能 Profiling
-"""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(report)
-    print(f"Compression report saved: {output_path}")
-
-
-# ============================================================
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["distill", "verify", "report"], default="report")
-    p.add_argument("--output", default="modules/03_model_compression_distillation/outputs/compression_report.md")
-    return p.parse_args()
-
-
-def main():
-    args = parse_args()
-
-    if args.mode == "report":
-        generate_compression_report(args.output, {})
-    elif args.mode == "verify":
-        # Verify ONNX accuracy (placeholder — uses pretrained model)
-        print("ONNX verification: load model and compare with PyTorch output")
-        print("Run with actual ONNX model path for real verification")
-    elif args.mode == "distill":
-        print("Knowledge distillation requires:")
-        print("  1. Teacher model (Paraformer-large) loaded")
-        print("  2. Student model (Paraformer-tiny) loaded")
-        print("  3. Training data (AISHELL + car commands)")
-        print("  4. GPU with sufficient memory")
-        print("\nPipeline ready — run when GPU resources available.")
+    (args.output_dir / "distillation-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Checkpoint: {checkpoint_path}")
+    print("Training is complete; CER/ONNX parity remain separate acceptance gates.")
 
 
 if __name__ == "__main__":

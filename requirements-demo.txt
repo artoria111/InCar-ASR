@@ -1,0 +1,3 @@
+# Minimal, CPU-only dependency set for the reproducible offline ASR demo.
+numpy>=1.24,<3
+sherpa-onnx==1.13.4

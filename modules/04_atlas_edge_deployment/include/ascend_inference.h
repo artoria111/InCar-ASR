@@ -31,13 +31,13 @@ public:
      * @brief 输入输出Tensor描述
      */
     struct TensorDesc {
-        std::vector<int64_t> shape;       // e.g. {1, N, 80} for FBank input
+        std::vector<int64_t> shape;       // e.g. {1, N, 560} for LFR input
         size_t               elem_size;   // bytes per element
         std::string          name;
     };
 
     struct Result {
-        std::vector<float>  logits;       // CTC logits [T, vocab_size]
+        std::vector<float>  logits;       // Paraformer logits [T, vocab_size]
         int                 vocab_size;
         int                 time_steps;
         ErrorCode           error;
@@ -59,7 +59,7 @@ public:
 
     /**
      * @brief 执行一次NPU推理
-     * @param features  FBank特征数据 [T * 80] 按行存储
+     * @param features  LFR特征数据 [T * 560] 按行存储
      * @param num_frames 帧数 T
      * @return 推理结果（logits）
      */

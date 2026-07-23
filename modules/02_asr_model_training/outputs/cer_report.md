@@ -1,63 +1,21 @@
-# 语音识别模型 CER 评估报告
+# Historical CER report status
 
-> 生成时间: 2026-07-17 14:54
-> 模型: Paraformer-large (220M)
-> 测试集: AISHELL-1 test (200 样本)
+The previous file mixed literature numbers, local experiments, estimates, and
+unverified Atlas claims, so it must not be used as release evidence.
 
----
+No reproducible CER result is committed because the corresponding source audio,
+portable manifest, exact model revision, and prediction file are not all
+available in the repository.
 
-## 1. CER 结果
+Generate a new evidence-bearing JSON and Markdown report with:
 
-| 指标 | 数值 |
-|------|------|
-| **字错率 (CER)** | **1.29%** |
-| 测试样本数 | 200 |
-| 项目目标 (安静环境) | < 3% |
-| 是否达标 | ✅ 通过 |
+```bash
+python modules/02_asr_model_training/scripts/03_evaluate_baseline.py \
+  --manifest /path/to/test.jsonl \
+  --data-root /path/to/audio-root \
+  --output reports/baseline-evaluation.json
+```
 
-## 2. 模型对比
-
-### 文献基准 (AISHELL-1 test)
-
-| 模型 | 参数量 | CER | GPU RTF (V100) |
-|------|:------:|:---:|:----------:|
-| **Paraformer-large** | 220M | **1.95%** | 0.025 |
-| Paraformer-tiny (本项目部署) | 5.2M | — | 0.004 |
-| Conformer | 46M | 4.50% | 0.060 |
-| Zipformer | 25M | 3.50% | — |
-| Whisper-large-v3 | 1.5B | 7.40% | 0.075 |
-
-### 本项目板端实测
-
-| 指标 | 目标 | 实测 | 状态 |
-|------|:--:|:--:|:--:|
-| RTF | < 0.1 | 0.105 | ⚠️ 接近 |
-| 端到端延迟 | < 500ms | 429ms | ✅ |
-| 模型体积 | < 50MB | 25MB (ONNX) | ✅ |
-| 功耗 | < 8W | 6.6W | ✅ |
-
-## 3. CER 按句长分布
-
-| 句长 | 样本占比 | CER |
-|:--:|:--:|:--:|
-| 1-10 字 | 35% | ~1% |
-| 11-20 字 | 45% | ~1.5% |
-| 21+ 字 | 20% | ~2% |
-
-> 车载指令均为短句 (3-8 字)，CER 预期优于平均值。
-
-## 4. Bad Case 分析
-
-高错误率样本主要特征:
-- **未登录词**: 人名、地名不在模型词表中
-- **数字串**: 纯数字序列容易漏识
-- **长句 (>20 字)**: 注意力跨度不足
-
-车载指令场景不受以上因素影响。
-
-## 5. 结论
-
-1. Paraformer-large 在 AISHELL-1 上 CER 1.95% (文献) / 1.29% (实测)，**满足 < 3% 目标**。
-2. Paraformer-tiny 适用于车载指令词识别，部署体积 25MB。
-3. 车载噪声环境 CER 评估需成员A 噪声增强测试集 (SNR 5-15dB) 产出后补齐。
-4. 板端性能指标基本达标 (RTF 0.105 接近目标 0.1)。
+A valid report must contain all predictions, failed samples, corpus-weighted
+edit counts, model identity, and the manifest/artifact provenance described in
+`docs/TRAINING_AND_EVALUATION.md`.

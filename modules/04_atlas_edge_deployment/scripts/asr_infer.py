@@ -1,108 +1,137 @@
 #!/usr/bin/env python3
-"""端到端车载语音识别 — 完整 Paraformer ONNX (Encoder + Predictor + Decoder)"""
-import numpy as np, onnxruntime as ort, json, os, sys, time
-import soundfile as sf
+"""Run a fixed-shape full Paraformer ONNX model with the shared frontend."""
 
-MODEL = '/root/work/car-asr-engine/model/paraformer_full.onnx'
-TOKENS = '/root/work/car-asr-engine/model/tokens.json'
-FIXED_T, N_MELS = 300, 80
-FRAME_LEN, FRAME_SHIFT = 400, 160
-LFR_M, LFR_N = 7, 6
+from __future__ import annotations
 
-class ASREngine:
-    def __init__(self):
-        self.sess = ort.InferenceSession(MODEL, providers=['CPUExecutionProvider'])
-        self.tokens = json.load(open(TOKENS))
-        self._build_mel_filter()
-        self.win = 0.54 - 0.46 * np.cos(2*np.pi*np.arange(FRAME_LEN)/(FRAME_LEN-1))
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
 
-    def _build_mel_filter(self):
-        hz2mel=lambda hz:2595*np.log10(1+hz/700)
-        mel2hz=lambda m:700*(10**(m/2595)-1)
-        pts=mel2hz(np.linspace(hz2mel(0),hz2mel(8000),N_MELS+2))
-        bins=np.clip(np.floor(513*pts/16000).astype(int),0,256)
-        self.mel_w=np.zeros((N_MELS,257))
-        for m in range(N_MELS):
-            for k in range(bins[m],bins[m+1]): self.mel_w[m,k]=(k-bins[m])/max(1,bins[m+1]-bins[m])
-            for k in range(bins[m+1],bins[m+2]): self.mel_w[m,k]=(bins[m+2]-k)/max(1,bins[m+2]-bins[m+1])
+import numpy as np
 
-    def extract_fbank(self, audio):
-        audio=np.asarray(audio,dtype=np.float32)
-        emp=np.zeros_like(audio); emp[0]=audio[0]; emp[1:]=audio[1:]-0.97*audio[:-1]
-        nf=max(1,(len(emp)-FRAME_LEN)//FRAME_SHIFT+1)
-        frames=np.array([emp[i*FRAME_SHIFT:i*FRAME_SHIFT+FRAME_LEN]*self.win for i in range(nf)])
-        mag=np.abs(np.fft.rfft(frames,n=512,axis=1))
-        return np.log(np.maximum(np.dot(mag[:,:257],self.mel_w.T),1e-10))
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPOSITORY_ROOT))
 
-    def apply_lfr(self, fbank):
-        T=fbank.shape[0]; out=[]
-        t=0
-        while t+LFR_M<=T: out.append(fbank[t:t+LFR_M].flatten()); t+=LFR_N
-        return np.array(out,dtype=np.float32) if out else np.zeros((1,N_MELS*LFR_M),dtype=np.float32)
+from scripts.baseline_config import load_baseline_config
+from scripts.frontend import extract_lfr_features, read_wave_float32
 
-    def infer(self, audio_wav):
-        t_total=time.time()
 
-        # Frontend
-        t0=time.time(); fbank=self.extract_fbank(audio_wav)
-        t_fbank=time.time()-t0
-        t0=time.time(); lfr=self.apply_lfr(fbank)
-        t_lfr=time.time()-t0
+def load_tokens(path: Path) -> list[str]:
+    if path.suffix.lower() == ".json":
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(value, list):
+            return [str(token) for token in value]
+        if isinstance(value, dict):
+            if all(str(index).isdigit() for index in value):
+                entries = {int(index): str(token) for index, token in value.items()}
+            elif all(isinstance(index, int) for index in value.values()):
+                entries = {int(index): str(token) for token, index in value.items()}
+            else:
+                raise ValueError("tokens JSON dict must map ids to tokens or tokens to ids")
+            tokens = [""] * (max(entries, default=-1) + 1)
+            for index, token in entries.items():
+                tokens[index] = token
+            return tokens
+        raise ValueError("tokens JSON must be a list or id-to-token object")
 
-        # Pad/crop to fixed T
-        T=lfr.shape[0]; orig_T=T
-        if T<FIXED_T:
-            lfr=np.vstack([lfr,np.zeros((FIXED_T-T,N_MELS*LFR_M),dtype=np.float32)])
+    entries: dict[int, str] = {}
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines()
+    ):
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        parts = line.rsplit(maxsplit=1)
+        if len(parts) == 2 and parts[1].isdigit():
+            token, token_id = parts[0], int(parts[1])
         else:
-            lfr=lfr[:FIXED_T]; orig_T=FIXED_T
+            token, token_id = line, line_number
+        entries[token_id] = token
+    tokens = [""] * (max(entries, default=-1) + 1)
+    for token_id, token in entries.items():
+        tokens[token_id] = token
+    return tokens
 
-        # ONNX: Full Paraformer
-        t0=time.time()
-        decoder_out, token_lens = self.sess.run(None, {'speech':lfr[np.newaxis,:,:]})
-        t_onnx=time.time()-t0
 
-        # Decode (full decoder output, no CTC needed)
-        n_tokens = int(token_lens[0])
-        logits = decoder_out[0, :n_tokens, :]  # [N, vocab]
-        best_ids = np.argmax(logits, axis=1)
+def session_inputs(session, features: np.ndarray, feature_length: int) -> dict:
+    inputs = {}
+    for index, descriptor in enumerate(session.get_inputs()):
+        if index == 0:
+            value = features[np.newaxis].astype(np.float32)
+        elif "len" in descriptor.name.lower():
+            value = np.asarray([feature_length], dtype=np.int64)
+        else:
+            raise ValueError(f"unsupported extra ONNX input: {descriptor.name}")
+        if "int32" in descriptor.type:
+            value = value.astype(np.int32)
+        inputs[descriptor.name] = value
+    return inputs
 
-        # Remove sos(2), eos(3), blank(0)
-        text=''
-        for tid in best_ids:
-            if tid not in (0,2,3) and tid<len(self.tokens):
-                text+=self.tokens[tid]
 
-        t_total=time.time()-t_total
-        return text, {
-            'fbank_ms':t_fbank*1000,'lfr_ms':t_lfr*1000,'onnx_ms':t_onnx*1000,
-            'total_ms':t_total*1000,'frames':T,'tokens':n_tokens
-        }
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--tokens", type=Path, required=True)
+    parser.add_argument("--wav", type=Path, required=True)
+    parser.add_argument(
+        "--fixed-frames",
+        type=int,
+        default=300,
+        help="Pad/crop LFR input to the ATC fixed frame count",
+    )
+    args = parser.parse_args()
 
-def main():
-    engine = ASREngine()
-    print('ASR Engine (Full Paraformer) ready.\n')
+    import onnxruntime as ort
 
-    if len(sys.argv)>1:
-        wav=sys.argv[1]
-        audio,sr=sf.read(wav,dtype='float32')
-        if audio.ndim>1: audio=audio.mean(axis=1)
-        if sr!=16000:
-            from scipy.signal import resample_poly
-            import math; g=math.gcd(sr,16000)
-            audio=resample_poly(audio,16000//g,sr//g)
-    else:
-        sr=16000; audio=0.2*np.sin(2*np.pi*440*np.linspace(0,2,sr*2)).astype(np.float32)
-        wav='(test tone)'
+    samples, sample_rate = read_wave_float32(args.wav)
+    features = extract_lfr_features(
+        samples, sample_rate, load_baseline_config()
+    )
+    original_frames = min(len(features), args.fixed_frames)
+    fixed = np.zeros((args.fixed_frames, features.shape[1]), dtype=np.float32)
+    fixed[:original_frames] = features[:original_frames]
 
-    dur=len(audio)/16000
-    text,stats=engine.infer(audio)
+    session = ort.InferenceSession(
+        str(args.model), providers=["CPUExecutionProvider"]
+    )
+    start = time.perf_counter()
+    outputs = session.run(
+        None, session_inputs(session, fixed, original_frames)
+    )
+    elapsed = time.perf_counter() - start
 
-    print(f'Input:  {wav} ({dur:.1f}s)')
-    print(f'FBank:  {stats["frames"]} frames ({stats["fbank_ms"]:.0f}ms)')
-    print(f'ONNX:   {stats["onnx_ms"]:.0f}ms  ({stats["tokens"]} output tokens)')
-    print(f'Total:  {stats["total_ms"]:.0f}ms')
-    print(f'\n  Result: "{text}"')
-    print(f'  *** FULL MODEL WORKING ***' if text else '  (empty)')
+    logits = np.asarray(outputs[0])[0]
+    token_count = (
+        int(np.asarray(outputs[1]).reshape(-1)[0])
+        if len(outputs) > 1
+        else logits.shape[0]
+    )
+    tokens = load_tokens(args.tokens)
+    special_ids = {0, 2, 3}
+    text = "".join(
+        tokens[token_id]
+        for token_id in np.argmax(logits[:token_count], axis=-1)
+        if token_id not in special_ids and token_id < len(tokens)
+    )
+    duration = len(samples) / sample_rate
+    print(
+        json.dumps(
+            {
+                "audio": str(args.wav),
+                "model": str(args.model),
+                "text": text,
+                "input_frames": original_frames,
+                "token_count": token_count,
+                "elapsed_seconds": elapsed,
+                "rtf": elapsed / duration,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
-if __name__=='__main__':
+
+if __name__ == "__main__":
     main()

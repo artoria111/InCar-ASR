@@ -39,13 +39,16 @@ public:
         }
 
         // 3. 初始化 CTC 解码器（如果提供了词典）
-        if (!cfg_.token_path.empty()) {
-            CTCDecoder::Config ctc_cfg;
-            ctc_cfg.blank_id = 0;
-            if (!ctc_.Init(cfg_.token_path, ctc_cfg)) {
-                fprintf(stderr, "[ASREngine] CTC decoder init failed\n");
-                return false;
-            }
+        if (cfg_.token_path.empty()) {
+            fprintf(stderr, "[ASREngine] token_path is required\n");
+            return false;
+        }
+        CTCDecoder::Config ctc_cfg;
+        ctc_cfg.blank_id = 0;
+        ctc_cfg.collapse_repeats = cfg_.ctc_collapse_repeats;
+        if (!ctc_.Init(cfg_.token_path, ctc_cfg)) {
+            fprintf(stderr, "[ASREngine] decoder init failed\n");
+            return false;
         }
 
         initialized_ = true;
@@ -54,7 +57,7 @@ public:
     }
 
     std::string Recognize(const std::vector<int16_t>& pcm_data) override {
-        if (!initialized_) return "";
+        if (!initialized_ || pcm_data.empty()) return "";
 
         Timer total_timer;
         metrics_ = PerfMetrics{};
@@ -92,6 +95,11 @@ public:
         std::vector<float> features;
         int num_frames = preprocessor_.ExtractFBank(speech_pcm, features);
         metrics_.preprocess_ms = prep_timer.ElapsedMs();
+        if (num_frames <= 0 || features.empty()) {
+            fprintf(stderr, "[ASREngine] FBank extraction failed\n");
+            metrics_.total_ms = total_timer.ElapsedMs();
+            return "";
+        }
 
         fprintf(stdout, "[ASREngine] FBank: %d frames extracted in %.2f ms\n",
                 num_frames, metrics_.preprocess_ms);
@@ -111,7 +119,7 @@ public:
         fprintf(stdout, "[ASREngine] NPU inference: %.2f ms, output [%d, %d]\n",
                 metrics_.inference_ms, result.time_steps, result.vocab_size);
 
-        // === Step 4: CTC 解码 ===
+        // === Step 4: Paraformer token decoding (optional CTC collapsing) ===
         Timer decode_timer;
         std::string text;
         if (cfg_.beam_size <= 1) {
@@ -123,21 +131,30 @@ public:
         metrics_.decode_ms = decode_timer.ElapsedMs();
 
         metrics_.total_ms = total_timer.ElapsedMs();
-        metrics_.rtf = metrics_.total_ms / metrics_.audio_duration_ms;
+        if (metrics_.audio_duration_ms > 0.0) {
+            metrics_.rtf = metrics_.total_ms / metrics_.audio_duration_ms;
+        }
 
         return text;
     }
 
     std::string RecognizeStream(
         const std::vector<int16_t>& pcm_chunk, bool is_end) override {
-        // TODO: 流式识别 — 第三周实现
-        (void)pcm_chunk;
-        (void)is_end;
-        return "";
+        if (!initialized_) return "";
+        stream_buffer_.insert(
+            stream_buffer_.end(), pcm_chunk.begin(), pcm_chunk.end());
+        if (!is_end) return "";
+        auto buffered_audio = std::move(stream_buffer_);
+        stream_buffer_.clear();
+        return Recognize(buffered_audio);
     }
 
     PerfMetrics GetMetrics() const override { return metrics_; }
-    void Reset() override { vad_.Reset(); metrics_ = PerfMetrics{}; }
+    void Reset() override {
+        vad_.Reset();
+        stream_buffer_.clear();
+        metrics_ = PerfMetrics{};
+    }
     bool IsInitialized() const override { return initialized_; }
 
 private:
@@ -149,6 +166,7 @@ private:
     VADDetector                       vad_;
     AudioPreprocessor                 preprocessor_;
     CTCDecoder                        ctc_;
+    std::vector<int16_t>              stream_buffer_;
 };
 
 // Factory

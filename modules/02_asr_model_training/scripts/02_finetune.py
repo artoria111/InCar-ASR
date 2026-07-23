@@ -19,9 +19,23 @@ ctc_weight = 0.3
 # ============================================================
 class CachedDataset(Dataset):
     def __init__(self, cache_path, vocab_size):
-        data = torch.load(cache_path, weights_only=False)
-        self.feats = data['feats']
-        self.token_ids = data['token_ids']
+        cache_path = str(cache_path)
+        if cache_path.endswith(".npz"):
+            import numpy as np
+
+            data = np.load(cache_path, allow_pickle=False)
+            self.feats = [
+                torch.from_numpy(data["features"][index, :length].copy())
+                for index, length in enumerate(data["feature_lengths"])
+            ]
+            self.token_ids = [
+                torch.from_numpy(data["token_ids"][index, :length].copy())
+                for index, length in enumerate(data["token_lengths"])
+            ]
+        else:
+            data = torch.load(cache_path, weights_only=False)
+            self.feats = data['feats']
+            self.token_ids = data['token_ids']
         self.vocab_size = vocab_size
 
     def __len__(self):
@@ -77,7 +91,12 @@ def train_epoch(model, loader, optimizer, scaler, device, ctc_loss, ce_loss):
             # CTC loss
             ctc_out = model.ctc.ctc_lo(encoder_out)
             ctc_log = nn.functional.log_softmax(ctc_out, dim=-1)
-            loss_ctc = ctc_loss(ctc_log.transpose(0, 1), targets, feat_lens, target_lens)
+            loss_ctc = ctc_loss(
+                ctc_log.transpose(0, 1),
+                targets,
+                encoder_out_lens,
+                target_lens,
+            )
 
             # Decoder CE loss — per-sample
             loss_ce = torch.tensor(0.0, device=device)
@@ -125,7 +144,12 @@ def validate(model, loader, device, ctc_loss, ce_loss):
 
             ctc_out = model.ctc.ctc_lo(encoder_out)
             ctc_log = nn.functional.log_softmax(ctc_out, dim=-1)
-            loss_ctc = ctc_loss(ctc_log.transpose(0, 1), targets, feat_lens, target_lens)
+            loss_ctc = ctc_loss(
+                ctc_log.transpose(0, 1),
+                targets,
+                encoder_out_lens,
+                target_lens,
+            )
 
             loss_ce_v = torch.tensor(0.0, device=device)
             for i in range(decoder_out.size(0)):
@@ -149,7 +173,14 @@ def parse_args():
     p.add_argument('--lr', type=float, default=1e-4)
     p.add_argument('--batch_size', type=int, default=8)
     p.add_argument('--output_dir', default='modules/02_asr_model_training/outputs')
-    p.add_argument('--model_dir', default='models/models/damo--speech_paraformer-tiny-commandword_asr_nat-zh-cn-16k-vocab544-pytorch/snapshots/master')
+    p.add_argument(
+        '--model_dir',
+        default='damo/speech_paraformer-tiny-commandword_asr_nat-zh-cn-16k-vocab544-pytorch',
+        help='FunASR hub ID or local model directory',
+    )
+    p.add_argument('--train_cache', default='modules/02_asr_model_training/data/train_cache.npz')
+    p.add_argument('--val_cache', default='modules/02_asr_model_training/data/val_cache.npz')
+    p.add_argument('--tokens', help='tokens.json or tokens.txt; defaults to MODEL_DIR/tokens.json')
     return p.parse_args()
 
 
@@ -176,13 +207,17 @@ def main():
     print(f'  Params: {total:,} total, {trainable:,} trainable (encoder frozen)')
 
     # Vocab
-    with open(f'{args.model_dir}/tokens.json', 'r', encoding='utf-8') as f:
-        vocab_size = len(json.load(f))
+    token_path = args.tokens or f'{args.model_dir}/tokens.json'
+    with open(token_path, 'r', encoding='utf-8') as f:
+        if token_path.endswith('.json'):
+            vocab_size = len(json.load(f))
+        else:
+            vocab_size = sum(1 for line in f if line.strip())
 
     # Load cached data
     print('\n[2/3] Loading cached features...')
-    train_ds = CachedDataset(f'{DATA_DIR}/train_cached.pt', vocab_size)
-    val_ds = CachedDataset(f'{DATA_DIR}/val_cached.pt', vocab_size)
+    train_ds = CachedDataset(args.train_cache, vocab_size)
+    val_ds = CachedDataset(args.val_cache, vocab_size)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=0, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
@@ -214,7 +249,10 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(),
-                        'val_loss': val_loss, 'train_loss': train_loss},
+                        'val_loss': val_loss, 'train_loss': train_loss,
+                        'model': args.model_dir, 'tokens': token_path,
+                        'train_cache': args.train_cache,
+                        'val_cache': args.val_cache},
                        f'{args.output_dir}/best_model.pt')
             print(f'    [SAVED] best model checkpoint')
 

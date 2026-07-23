@@ -1,30 +1,28 @@
-#!/bin/bash
-# ============================================================
-# Ascend Profiling 性能分析脚本
-# ============================================================
-# Usage: ./scripts/profile.sh
-# ============================================================
-set -e
+#!/usr/bin/env bash
+# Run the Atlas CLI with CANN profiling enabled.
+set -euo pipefail
 
-source $(dirname $0)/env_setup.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODULE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$MODULE_DIR/../.." && pwd)"
 
-PROFILE_DIR="/root/work/car-asr-engine/profile_output"
-mkdir -p $PROFILE_DIR
+source "$SCRIPT_DIR/env_setup.sh"
 
-echo "Starting profiling..."
-echo "Output dir: $PROFILE_DIR"
+PROFILE_DIR="${PROFILE_DIR:-$REPO_ROOT/atlas-results/profile-$(date +%Y%m%d-%H%M%S)}"
+BINARY="${CAR_ASR_BINARY:-$REPO_ROOT/build/atlas/car-asr-cli}"
+mkdir -p "$PROFILE_DIR"
 
-# 设置Profiling环境变量
+if [[ ! -x "$BINARY" ]]; then
+    echo "car-asr-cli not found or not executable: $BINARY" >&2
+    exit 2
+fi
+
 export ACL_PROFILING=ON
-export PROFILING_DIR=$PROFILE_DIR
-export PROFILING_OPTIONS="task_trace:on,op_trace:on"
+export PROFILING_DIR="$PROFILE_DIR"
+export PROFILING_OPTIONS="${PROFILING_OPTIONS:-task_trace:on,op_trace:on}"
 
-# 运行推理程序
-./build/car-asr-cli "$@"
+echo "Profiling output: $PROFILE_DIR"
+"$BINARY" "$@"
 
-# 关闭Profiling
 export ACL_PROFILING=OFF
-
-echo ""
-echo "Profiling data saved to: $PROFILE_DIR"
 echo "Analyze with: msprof --input=$PROFILE_DIR"

@@ -1,0 +1,47 @@
+name: CPU CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  reproducible-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-demo.txt
+      - run: python -m pip install -r requirements-demo.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q scripts apps modules tests
+
+  dataset-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: modules/01_dataset_building/requirements.txt
+      - run: python -m pip install -r modules/01_dataset_building/requirements.txt
+      - run: python -m pytest modules/01_dataset_building/tests -q
+
+  cpp-host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >
+          cmake -S modules/04_atlas_edge_deployment -B build/host
+          -DCAR_ASR_BUILD_ENGINE=OFF
+          -DCAR_ASR_BUILD_HOST_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/host --parallel 2
+      - run: ctest --test-dir build/host --output-on-failure
