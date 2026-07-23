@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <complex>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -13,6 +14,7 @@ void AudioPreprocessor::PreEmphasis(const std::vector<int16_t>& pcm,
                                      std::vector<float>& out) {
     int n = static_cast<int>(pcm.size());
     out.resize(n);
+    if (n == 0) return;
     out[0] = pcm[0] / 32768.0f;
     for (int i = 1; i < n; i++) {
         out[i] = pcm[i] / 32768.0f - 0.97f * (pcm[i-1] / 32768.0f);
@@ -44,25 +46,36 @@ void AudioPreprocessor::FrameAndWindow(const std::vector<float>& signal,
 
 void AudioPreprocessor::ComputeFFT(const std::vector<float>& frame,
                                     std::vector<float>& magnitude) {
-    // 使用KissFFT作为内置替代（当FFTW3不可用时）
-    // 简化实现：DFT for real input
     int N = kFftPoints;
     magnitude.resize(N / 2 + 1, 0.0f);
-
-    // Real DFT (this is slow — production code should use FFTW3)
-    std::vector<float> real(N, 0.0f), imag(N, 0.0f);
+    std::vector<std::complex<float>> spectrum(N, {0.0f, 0.0f});
     int frame_len = std::min(static_cast<int>(frame.size()), kWindowSamples);
-    for (int i = 0; i < frame_len; i++) real[i] = frame[i];
+    for (int i = 0; i < frame_len; i++) spectrum[i] = {frame[i], 0.0f};
 
-    // Slow DFT (placeholder — replace with KissFFT or FFTW3 in production)
-    for (int k = 0; k < N/2 + 1; k++) {
-        float re = 0.0f, im = 0.0f;
-        for (int n = 0; n < N; n++) {
-            float angle = -2.0f * M_PI * k * n / N;
-            re += real[n] * std::cos(angle);
-            im += real[n] * std::sin(angle);
+    // Iterative radix-2 Cooley-Tukey FFT (N is fixed at 512).
+    for (int i = 1, j = 0; i < N; ++i) {
+        int bit = N >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(spectrum[i], spectrum[j]);
+    }
+    for (int length = 2; length <= N; length <<= 1) {
+        const float angle = -2.0f * static_cast<float>(M_PI) / length;
+        const std::complex<float> root(std::cos(angle), std::sin(angle));
+        for (int start = 0; start < N; start += length) {
+            std::complex<float> factor(1.0f, 0.0f);
+            for (int offset = 0; offset < length / 2; ++offset) {
+                const auto even = spectrum[start + offset];
+                const auto odd =
+                    spectrum[start + offset + length / 2] * factor;
+                spectrum[start + offset] = even + odd;
+                spectrum[start + offset + length / 2] = even - odd;
+                factor *= root;
+            }
         }
-        magnitude[k] = std::sqrt(re * re + im * im) / N;
+    }
+    for (int k = 0; k <= N / 2; ++k) {
+        magnitude[k] = std::abs(spectrum[k]) / N;
     }
 }
 
@@ -129,6 +142,8 @@ void AudioPreprocessor::MelFilterAndLog(const std::vector<float>& magnitude,
 
 int AudioPreprocessor::ExtractFBank(const std::vector<int16_t>& pcm_data,
                                      std::vector<float>& features) {
+    features.clear();
+    if (pcm_data.empty()) return 0;
     // Step 1: 预加重
     std::vector<float> pre_emph;
     PreEmphasis(pcm_data, pre_emph);
@@ -152,7 +167,7 @@ int AudioPreprocessor::ExtractFBank(const std::vector<int16_t>& pcm_data,
                     kFbankDim * sizeof(float));
     }
 
-    // Step 5: 全局归一化（CMVN简化版）
+    // Step 5: 全局归一化（与 configs/baseline.json 保持一致）
     float sum = 0.0f, sq_sum = 0.0f;
     int total = num_frames * kFbankDim;
     for (int i = 0; i < total; i++) sum += features[i];
@@ -166,7 +181,23 @@ int AudioPreprocessor::ExtractFBank(const std::vector<int16_t>& pcm_data,
         features[i] = (features[i] - mean) / std;
     }
 
-    return num_frames;
+    // Step 6: LFR — stack 7 adjacent FBank frames and advance by 6.
+    if (num_frames < kLfrM) {
+        features.resize(kLfrM * kFbankDim, 0.0f);
+        num_frames = kLfrM;
+    }
+    const int lfr_frames = 1 + (num_frames - kLfrM) / kLfrN;
+    std::vector<float> lfr(
+        static_cast<size_t>(lfr_frames) * kFeatureDim, 0.0f);
+    for (int frame = 0; frame < lfr_frames; ++frame) {
+        const int source_frame = frame * kLfrN;
+        std::memcpy(
+            lfr.data() + static_cast<size_t>(frame) * kFeatureDim,
+            features.data() + static_cast<size_t>(source_frame) * kFbankDim,
+            kFeatureDim * sizeof(float));
+    }
+    features = std::move(lfr);
+    return lfr_frames;
 }
 
 } // namespace car_asr

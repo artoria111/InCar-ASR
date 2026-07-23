@@ -10,8 +10,7 @@
  *                 --wav test/test_audio.wav \
  *                 --tokens model/tokens.txt
  *
- *   # 交互模式（使用麦克风）
- *   ./car-asr-cli --model model/paraformer_small_fp16.om --interactive
+ * Python microphone capture is provided by scripts/microphone_demo.py.
  */
 
 #include "asr_engine.h"
@@ -23,37 +22,6 @@
 
 using namespace car_asr;
 
-// 简单的WAV文件读取（PCM16格式）
-static std::vector<int16_t> ReadWav(const std::string& path, int* sample_rate = nullptr) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        fprintf(stderr, "Cannot open WAV file: %s\n", path.c_str());
-        return {};
-    }
-
-    // WAV header: 44 bytes
-    char header[44];
-    file.read(header, 44);
-
-    // 验证格式
-    int sr = *reinterpret_cast<int*>(header + 24);
-    int bits = *reinterpret_cast<short*>(header + 34);
-    int channels = *reinterpret_cast<short*>(header + 22);
-    int data_size = *reinterpret_cast<int*>(header + 40);
-
-    if (sample_rate) *sample_rate = sr;
-
-    fprintf(stdout, "[WAV] sr=%d, bits=%d, channels=%d, data_size=%d\n",
-            sr, bits, channels, data_size);
-
-    int num_samples = data_size / (bits / 8);
-    std::vector<int16_t> pcm(num_samples);
-    file.read(reinterpret_cast<char*>(pcm.data()), data_size);
-    file.close();
-
-    return pcm;
-}
-
 static void PrintUsage(const char* prog) {
     printf("Usage: %s [OPTIONS]\n", prog);
     printf("Options:\n");
@@ -62,7 +30,6 @@ static void PrintUsage(const char* prog) {
     printf("  --tokens, -t <path>      Token dictionary file\n");
     printf("  --device, -d <id>        NPU device ID (default: 0)\n");
     printf("  --vad-mode <0-3>         VAD aggressiveness (default: 2)\n");
-    printf("  --interactive, -i         Interactive microphone mode\n");
     printf("  --help, -h                Show this help\n");
 }
 
@@ -73,7 +40,6 @@ int main(int argc, char* argv[]) {
     std::string token_path = "model/tokens.txt";
     int device_id   = 0;
     int vad_mode    = 2;
-    bool interactive = false;
 
     // Parse arguments
     static struct option long_opts[] = {
@@ -82,19 +48,17 @@ int main(int argc, char* argv[]) {
         {"tokens",      required_argument, 0, 't'},
         {"device",      required_argument, 0, 'd'},
         {"vad-mode",    required_argument, 0, 0},
-        {"interactive", no_argument,       0, 'i'},
         {"help",        no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "m:w:t:d:ih", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "m:w:t:d:h", long_opts, nullptr)) != -1) {
         switch (opt) {
             case 'm': model_path  = optarg; break;
             case 'w': wav_path    = optarg; break;
             case 't': token_path  = optarg; break;
             case 'd': device_id   = atoi(optarg); break;
-            case 'i': interactive = true; break;
             case 'h':
             default:  PrintUsage(argv[0]); return opt == 'h' ? 0 : 1;
         }
@@ -117,6 +81,7 @@ int main(int argc, char* argv[]) {
     cfg.device_id = device_id;
     cfg.vad_mode  = vad_mode;
     cfg.token_path = token_path;
+    cfg.ctc_collapse_repeats = false;
 
     auto engine = ASREngine::Create(cfg);
     if (!engine) {
@@ -132,9 +97,17 @@ int main(int argc, char* argv[]) {
 
     // 识别
     if (!wav_path.empty()) {
-        auto pcm = ReadWav(wav_path);
+        int sample_rate = 0;
+        auto pcm = ReadWavFile(wav_path, &sample_rate);
         if (pcm.empty()) {
-            fprintf(stderr, "Failed to read WAV file\n");
+            fprintf(stderr,
+                    "Failed to read WAV file (requires mono PCM16)\n");
+            return 1;
+        }
+        if (sample_rate != kSampleRate) {
+            fprintf(stderr,
+                    "Unsupported sample rate %d; resample to %d Hz first\n",
+                    sample_rate, kSampleRate);
             return 1;
         }
 
@@ -150,11 +123,8 @@ int main(int argc, char* argv[]) {
         auto metrics = engine->GetMetrics();
         metrics.Print();
 
-    } else if (interactive) {
-        fprintf(stdout, "Interactive mode not yet implemented.\n");
-        fprintf(stdout, "Use --wav to recognize a WAV file.\n");
     } else {
-        fprintf(stdout, "No input specified. Use --wav or --interactive.\n");
+        fprintf(stdout, "No input specified. Use --wav.\n");
     }
 
     fprintf(stdout, "\nDone.\n");

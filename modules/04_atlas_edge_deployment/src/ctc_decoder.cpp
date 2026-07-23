@@ -4,6 +4,7 @@
 #include <queue>
 #include <cmath>
 #include <cstdio>
+#include <sstream>
 
 namespace car_asr {
 
@@ -23,9 +24,26 @@ bool CTCDecoder::Init(const std::string& token_path, const Config& cfg) {
     int id = 0;
     while (std::getline(file, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        id2token_[id] = line;
-        token2id_[line] = id;
-        id++;
+        if (line.empty()) continue;
+        std::string token = line;
+        int token_id = id;
+        const auto separator = line.find_last_of(" \t");
+        if (separator != std::string::npos) {
+            const std::string id_text = line.substr(separator + 1);
+            try {
+                size_t consumed = 0;
+                const int parsed_id = std::stoi(id_text, &consumed);
+                if (consumed == id_text.size()) {
+                    token = line.substr(0, separator);
+                    token_id = parsed_id;
+                }
+            } catch (const std::exception&) {
+                // Plain one-token-per-line vocabulary.
+            }
+        }
+        id2token_[token_id] = token;
+        token2id_[token] = token_id;
+        id = std::max(id, token_id + 1);
     }
     file.close();
 
@@ -50,7 +68,8 @@ std::vector<int> CTCDecoder::GreedySearch(const float* logits, int T, int V) {
         }
 
         // CTC merge: skip blank and consecutive duplicates
-        if (best != cfg_.blank_id && best != prev_token) {
+        if (best != cfg_.blank_id &&
+            (!cfg_.collapse_repeats || best != prev_token)) {
             tokens.push_back(best);
         }
         prev_token = best;
@@ -108,11 +127,13 @@ std::string CTCDecoder::BeamDecode(const float* logits, int T, int V, int beam_s
 
                 float new_score = beam.score + logits[t * V + v];
                 Beam new_beam = beam;
-                if (!beam.tokens.empty() && beam.tokens.back() == v) {
-                    new_beam.score = new_score - 1.0f;  // duplicate penalty
+                if (cfg_.collapse_repeats &&
+                    !beam.tokens.empty() && beam.tokens.back() == v) {
+                    new_beam.score = new_score - 1.0f;
+                } else {
+                    new_beam.tokens.push_back(v);
+                    new_beam.score = new_score;
                 }
-                new_beam.tokens.push_back(v);
-                new_beam.score = new_score;
                 next_beams.push_back(new_beam);
             }
         }

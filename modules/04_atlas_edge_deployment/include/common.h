@@ -39,7 +39,7 @@ inline const char* ErrorStr(ErrorCode e) {
         case ErrorCode::kInvalidAudio:      return "Invalid audio data";
         case ErrorCode::kPreprocessFailed:  return "Audio preprocess failed";
         case ErrorCode::kVadFailed:         return "VAD failed";
-        case ErrorCode::kDecodeFailed:      return "CTC decode failed";
+        case ErrorCode::kDecodeFailed:      return "Token decode failed";
         case ErrorCode::kNotInitialized:    return "Engine not initialized";
         default:                            return "Unknown error";
     }
@@ -55,6 +55,9 @@ constexpr int kWindowSamples = kSampleRate * kFrameLength / 1000;  // 400 sample
 constexpr int kShiftSamples  = kSampleRate * kFrameShift  / 1000;  // 160 samples
 constexpr int kFbankDim      = 80;         // 80-dim FBank features
 constexpr int kFftPoints     = 512;        // FFT points
+constexpr int kLfrM          = 7;          // stack 7 FBank frames
+constexpr int kLfrN          = 6;          // advance 6 FBank frames
+constexpr int kFeatureDim    = kFbankDim * kLfrM;  // 560-dim Paraformer input
 
 // ============================================================
 // Performance metrics
@@ -74,7 +77,7 @@ struct PerfMetrics {
         std::cout << "  Preprocess:      " << preprocess_ms << " ms" << std::endl;
         std::cout << "  VAD:             " << vad_ms << " ms" << std::endl;
         std::cout << "  NPU Inference:   " << inference_ms << " ms" << std::endl;
-        std::cout << "  CTC Decode:      " << decode_ms << " ms" << std::endl;
+        std::cout << "  Token Decode:    " << decode_ms << " ms" << std::endl;
         std::cout << "  Total latency:   " << total_ms << " ms" << std::endl;
         std::cout << "  RTF:             " << rtf << std::endl;
     }
@@ -98,6 +101,12 @@ public:
 private:
     std::chrono::high_resolution_clock::time_point start_;
 };
+
+std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr);
+bool WriteWavFile(
+    const std::string& path,
+    const std::vector<int16_t>& pcm,
+    int sample_rate = kSampleRate);
 
 } // namespace car_asr
 

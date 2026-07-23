@@ -10,7 +10,7 @@ namespace car_asr {
  * @brief 读取WAV文件（PCM16格式）
  * @return PCM 16-bit samples, 空vector表示失败
  */
-std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr) {
+std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return {};
 
@@ -28,6 +28,8 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
     int16_t bits_per_sample = 16;
     int32_t sample_rate     = 16000;
     int16_t num_channels    = 1;
+    int16_t audio_format    = 0;
+    bool found_format       = false;
     std::vector<char> data;
 
     while (file) {
@@ -39,7 +41,6 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
         file.read(reinterpret_cast<char*>(&chunk_size), 4);
 
         if (std::string(chunk_id, 4) == "fmt ") {
-            int16_t audio_format;
             file.read(reinterpret_cast<char*>(&audio_format), 2);
             file.read(reinterpret_cast<char*>(&num_channels), 2);
             file.read(reinterpret_cast<char*>(&sample_rate), 4);
@@ -47,6 +48,7 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
             file.read(reinterpret_cast<char*>(&bits_per_sample), 2);
             // 跳过剩余fmt字节
             if (chunk_size > 16) file.ignore(chunk_size - 16);
+            found_format = true;
         } else if (std::string(chunk_id, 4) == "data") {
             data.resize(chunk_size);
             file.read(data.data(), chunk_size);
@@ -55,6 +57,10 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
         }
     }
 
+    if (!found_format || data.empty() || audio_format != 1 ||
+        bits_per_sample != 16 || num_channels != 1) {
+        return {};
+    }
     if (sr_out) *sr_out = sample_rate;
 
     // 转换为int16_t
@@ -70,7 +76,7 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
  */
 bool WriteWavFile(const std::string& path,
                   const std::vector<int16_t>& pcm,
-                  int sample_rate = 16000) {
+                  int sample_rate) {
     std::ofstream file(path, std::ios::binary);
     if (!file) return false;
 

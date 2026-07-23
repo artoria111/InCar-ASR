@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.coverage
+htmlcov/
+.venv/
+.venv-demo/
+venv/
+
+# IDE and operating system
+.DS_Store
+.idea/
+.vscode/
+
+# Audio data and generated reports
+modules/01_dataset_building/data/raw/
+modules/01_dataset_building/data/processed/
+modules/01_dataset_building/data/external/
+modules/01_dataset_building/data/metadata.csv
+reports/
+*.wav
+*.flac
+*.m4a
+
+# Model files (large binaries)
+*.onnx
+*.om
+*.npy
+*.npz
+*.pt
+models/
+*.tar.bz2
+outputs/
+modules/*/outputs/
+
+# AISHELL dataset (large audio files)
+data/data_aishell/
+data/*.tgz
+data/*.aria2
+
+# Model outputs (large ONNX/PT files)
+modules/*/outputs/*.onnx
+modules/*/outputs/*.pt
+modules/*/outputs/*.npy
+modules/*/outputs/*.npz
+
+# Reporting
+/汇报/
+.claude/

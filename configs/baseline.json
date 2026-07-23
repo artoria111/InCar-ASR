@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "model": {
+    "name": "sherpa-onnx-paraformer-zh-small-2024-03-09",
+    "family": "paraformer",
+    "precision": "int8",
+    "runtime": "sherpa-onnx",
+    "runtime_version": "1.13.4",
+    "archive_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
+    "archive_sha256": "da92b3db5218c5be53aad53e57d1b6e63e7fc98a0e054fbdd6dbe18e9c6b1450",
+    "model_file": "model.int8.onnx",
+    "tokens_file": "tokens.txt"
+  },
+  "frontend": {
+    "sample_rate": 16000,
+    "feature_dim": 80,
+    "frame_length_ms": 25,
+    "frame_shift_ms": 10,
+    "fft_size": 512,
+    "preemphasis": 0.97,
+    "lfr_m": 7,
+    "lfr_n": 6,
+    "normalization": "utterance_global"
+  },
+  "decoder": {
+    "method": "greedy_search"
+  }
+}

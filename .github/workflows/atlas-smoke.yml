@@ -1,0 +1,61 @@
+name: Atlas smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Exact branch, tag, or commit to test
+        required: true
+        default: main
+      model_path:
+        description: Absolute OM model path on the runner
+        required: true
+        default: /opt/incar-asr/models/paraformer.om
+      tokens_path:
+        description: Absolute token file path on the runner
+        required: true
+        default: /opt/incar-asr/models/tokens.txt
+      wav_path:
+        description: Absolute smoke WAV path on the runner
+        required: true
+        default: /opt/incar-asr/samples/smoke.wav
+      expected_text:
+        description: Optional exact transcript for text-parity checking
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-board
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, linux, arm64, atlas-310b]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref }}
+
+      - name: Build and run queued board task
+        shell: bash
+        env:
+          MODEL_PATH: ${{ inputs.model_path }}
+          TOKENS_PATH: ${{ inputs.tokens_path }}
+          WAV_PATH: ${{ inputs.wav_path }}
+          EXPECTED_TEXT: ${{ inputs.expected_text }}
+          RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          modules/04_atlas_edge_deployment/scripts/atlas_smoke.sh
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: atlas-results/
+          if-no-files-found: warn

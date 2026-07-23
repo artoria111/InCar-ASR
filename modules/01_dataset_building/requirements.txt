@@ -1,0 +1,8 @@
+numpy>=1.24,<3
+PyYAML>=6.0,<7
+scipy>=1.10,<2
+sounddevice>=0.4.6,<1
+soundfile>=0.12,<1
+
+# Development and verification
+pytest>=7.4,<9

@@ -11,7 +11,7 @@ namespace car_asr {
  * @brief 音频预处理：重采样 → 预加重 → 分帧 → FBank特征提取
  *
  * 输入：PCM 16kHz 16-bit 单声道音频
- * 输出：80维 FBank 特征矩阵 [num_frames, kFbankDim]
+ * 输出：FBank + LFR 特征矩阵 [num_frames, kFeatureDim]
  */
 class AudioPreprocessor {
 public:
@@ -21,7 +21,7 @@ public:
     /**
      * @brief 从PCM音频提取FBank特征
      * @param pcm_data  16kHz / 16-bit / mono 原始音频
-     * @param features  输出：FBank特征 [num_frames * kFbankDim]，逐帧存储
+     * @param features  输出：LFR特征 [num_frames * kFeatureDim]，逐帧存储
      * @return 帧数
      */
     int ExtractFBank(const std::vector<int16_t>& pcm_data,

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>InCar-ASR 实时监控</title>
+  <style>
+    :root { color-scheme: dark; --bg:#07111f; --card:#101d2f; --line:#253955; --accent:#54d6a1; --muted:#91a4bd; }
+    * { box-sizing:border-box; } body { margin:0; font:15px/1.5 system-ui,sans-serif; background:radial-gradient(circle at 20% 0,#15304a,var(--bg) 45%); color:#f4f8fc; }
+    main { max-width:1100px; margin:auto; padding:40px 22px; } header { display:flex; justify-content:space-between; align-items:end; gap:20px; }
+    h1 { margin:0; font-size:clamp(28px,5vw,48px); letter-spacing:-.04em; } .status { color:var(--accent); }
+    .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:28px 0; }
+    .card, table { background:rgba(16,29,47,.9); border:1px solid var(--line); border-radius:15px; }
+    .card { padding:20px; } .label { color:var(--muted); font-size:13px; } .value { margin-top:5px; font-size:28px; font-weight:700; }
+    table { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; } th,td { padding:14px; text-align:left; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-size:12px; text-transform:uppercase; } tr:last-child td { border-bottom:0; } .text { max-width:520px; }
+    .empty { color:var(--muted); text-align:center; padding:38px; } @media(max-width:720px){.cards{grid-template-columns:1fr}th:nth-child(2),td:nth-child(2){display:none}}
+  </style>
+</head>
+<body><main>
+  <header><div><div class="label">ATLAS / CPU RESULT STREAM</div><h1>InCar-ASR</h1></div><div id="status" class="status">● 连接中</div></header>
+  <section class="cards">
+    <div class="card"><div class="label">最近识别</div><div id="count" class="value">0</div></div>
+    <div class="card"><div class="label">平均 RTF</div><div id="rtf" class="value">—</div></div>
+    <div class="card"><div class="label">平均延迟</div><div id="latency" class="value">—</div></div>
+  </section>
+  <table><thead><tr><th>时间 / 来源</th><th>性能</th><th>识别文本</th></tr></thead><tbody id="rows"></tbody></table>
+</main>
+<script>
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function refresh(){
+  try{
+    const data=await fetch('/api/history',{cache:'no-store'}).then(r=>r.json()), xs=data.results;
+    status.textContent='● 已连接'; count.textContent=xs.length;
+    rtf.textContent=xs.length?(xs.reduce((a,x)=>a+x.rtf,0)/xs.length).toFixed(3):'—';
+    latency.textContent=xs.length?(1000*xs.reduce((a,x)=>a+x.elapsed_seconds,0)/xs.length).toFixed(1)+' ms':'—';
+    rows.innerHTML=xs.length?xs.map(x=>`<tr><td>${esc(x.created_at)}<br><span class="label">${esc(x.source)}</span></td><td>RTF ${x.rtf.toFixed(3)}<br><span class="label">${(x.elapsed_seconds*1000).toFixed(1)} ms</span></td><td class="text">${esc(x.text)||'<span class="label">（空结果）</span>'}</td></tr>`).join(''):'<tr><td colspan="3" class="empty">等待麦克风或板端任务提交结果</td></tr>';
+  }catch(e){status.textContent='● 未连接'}
+}
+refresh(); setInterval(refresh,1500);
+</script></body></html>

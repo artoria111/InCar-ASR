@@ -23,6 +23,7 @@ public:
             fprintf(stderr, "[AscendCL] aclInit failed: %d\n", ret);
             return false;
         }
+        acl_initialized_ = true;
         fprintf(stdout, "[AscendCL] aclInit OK\n");
 
         // 2. 设置设备
@@ -32,6 +33,7 @@ public:
                     cfg_.device_id, ret);
             return false;
         }
+        device_set_ = true;
         fprintf(stdout, "[AscendCL] SetDevice(%d) OK\n", cfg_.device_id);
 
         // 3. 创建上下文
@@ -68,6 +70,7 @@ public:
         // --- 输入Tensor ---
         if (num_inputs > 0) {
             input_size_ = aclmdlGetInputSizeByIndex(model_desc_, 0);
+            input_desc_.elem_size = sizeof(float);
 
             aclmdlIODims dims;
             ret = aclmdlGetInputDims(model_desc_, 0, &dims);
@@ -91,6 +94,7 @@ public:
         // --- 输出Tensor ---
         if (num_outputs > 0) {
             output_size_ = aclmdlGetOutputSizeByIndex(model_desc_, 0);
+            output_desc_.elem_size = sizeof(float);
 
             aclmdlIODims dims;
             ret = aclmdlGetOutputDims(model_desc_, 0, &dims);
@@ -109,6 +113,84 @@ public:
             for (auto d : output_desc_.shape) fprintf(stdout, "%lld ", (long long)d);
             fprintf(stdout, "\n");
         }
+        if (num_outputs > 1) {
+            output_length_size_ =
+                aclmdlGetOutputSizeByIndex(model_desc_, 1);
+            const char* name = aclmdlGetOutputNameByIndex(model_desc_, 1);
+            fprintf(stdout,
+                    "[AscendCL]   Output[1]: %s, size=%zu (token length)\n",
+                    name ? name : "<unnamed>", output_length_size_);
+        }
+
+        if (num_inputs != 1 || num_outputs < 1 || num_outputs > 2 ||
+            input_size_ == 0 || output_size_ == 0) {
+            fprintf(stderr,
+                    "[AscendCL] Expected one input and one or two outputs "
+                    "(logits[, token_length])\n");
+            return false;
+        }
+
+        // Allocate model I/O once. Reusing these buffers avoids per-request
+        // device allocations and makes latency measurements meaningful.
+        ret = aclrtMalloc(&input_device_, input_size_,
+                          ACL_MEM_MALLOC_NORMAL_ONLY);
+        if (ret != ACL_SUCCESS) {
+            fprintf(stderr, "[AscendCL] Input allocation failed: %d\n", ret);
+            return false;
+        }
+        ret = aclrtMalloc(&output_device_, output_size_,
+                          ACL_MEM_MALLOC_NORMAL_ONLY);
+        if (ret != ACL_SUCCESS) {
+            fprintf(stderr, "[AscendCL] Output allocation failed: %d\n", ret);
+            return false;
+        }
+        if (output_length_size_ > 0) {
+            ret = aclrtMalloc(&output_length_device_, output_length_size_,
+                              ACL_MEM_MALLOC_NORMAL_ONLY);
+            if (ret != ACL_SUCCESS) {
+                fprintf(stderr,
+                        "[AscendCL] Token-length allocation failed: %d\n", ret);
+                return false;
+            }
+        }
+
+        input_dataset_ = aclmdlCreateDataset();
+        output_dataset_ = aclmdlCreateDataset();
+        input_buffer_ = aclCreateDataBuffer(input_device_, input_size_);
+        output_buffer_ = aclCreateDataBuffer(output_device_, output_size_);
+        if (!input_dataset_ || !output_dataset_ ||
+            !input_buffer_ || !output_buffer_) {
+            fprintf(stderr, "[AscendCL] Dataset creation failed\n");
+            return false;
+        }
+        ret = aclmdlAddDatasetBuffer(input_dataset_, input_buffer_);
+        if (ret != ACL_SUCCESS) {
+            fprintf(stderr, "[AscendCL] Add input buffer failed: %d\n", ret);
+            return false;
+        }
+        ret = aclmdlAddDatasetBuffer(output_dataset_, output_buffer_);
+        if (ret != ACL_SUCCESS) {
+            fprintf(stderr, "[AscendCL] Add output buffer failed: %d\n", ret);
+            return false;
+        }
+        if (output_length_device_) {
+            output_length_buffer_ = aclCreateDataBuffer(
+                output_length_device_, output_length_size_);
+            if (!output_length_buffer_) {
+                fprintf(stderr,
+                        "[AscendCL] Token-length data buffer creation failed\n");
+                return false;
+            }
+            ret = aclmdlAddDatasetBuffer(
+                output_dataset_, output_length_buffer_);
+            if (ret != ACL_SUCCESS) {
+                fprintf(stderr,
+                        "[AscendCL] Add token-length output failed: %d\n", ret);
+                return false;
+            }
+            output_length_host_.resize(output_length_size_);
+        }
+        output_host_.resize(output_size_ / sizeof(float));
 
         initialized_ = true;
         fprintf(stdout, "[AscendCL] Init complete.\n");
@@ -125,83 +207,101 @@ public:
         }
 
         // 1. 准备输入数据：FBank特征 [1, num_frames, 80]
-        size_t input_bytes = static_cast<size_t>(num_frames) * kFbankDim * sizeof(float);
-        void* input_device = nullptr;
-        aclError ret = aclrtMalloc(&input_device, input_bytes,
-                                    ACL_MEM_MALLOC_NORMAL_ONLY);
+        size_t input_bytes =
+            static_cast<size_t>(num_frames) * kFeatureDim * sizeof(float);
+        if (!features || num_frames <= 0 || input_bytes > input_size_) {
+            fprintf(stderr,
+                    "[AscendCL] Invalid input: frames=%d bytes=%zu capacity=%zu\n",
+                    num_frames, input_bytes, input_size_);
+            result.error = ErrorCode::kInvalidAudio;
+            return result;
+        }
+
+        aclError ret = aclrtMemset(input_device_, input_size_, 0, input_size_);
         if (ret != ACL_SUCCESS) {
             result.error = ErrorCode::kMemcpyFailed;
             return result;
         }
-
-        ret = aclrtMemcpy(input_device, input_bytes,
+        ret = aclrtMemcpy(input_device_, input_size_,
                           features, input_bytes,
                           ACL_MEMCPY_HOST_TO_DEVICE);
         if (ret != ACL_SUCCESS) {
-            aclrtFree(input_device);
             result.error = ErrorCode::kMemcpyFailed;
             return result;
         }
 
-        // 2. 创建输入 Dataset
-        aclmdlDataset* input_dataset = aclmdlCreateDataset();
-        aclDataBuffer* input_buf = aclCreateDataBuffer(input_device, input_bytes);
-        aclmdlAddDatasetBuffer(input_dataset, input_buf);
-
-        // 3. 创建输出 Dataset + 输出缓冲区
-        void* output_device = nullptr;
-        ret = aclrtMalloc(&output_device, output_size_,
-                          ACL_MEM_MALLOC_NORMAL_ONLY);
-        if (ret != ACL_SUCCESS) {
-            aclmdlDestroyDataset(input_dataset);
-            aclDestroyDataBuffer(input_buf);
-            aclrtFree(input_device);
-            result.error = ErrorCode::kMemcpyFailed;
-            return result;
-        }
-
-        aclmdlDataset* output_dataset = aclmdlCreateDataset();
-        aclDataBuffer* output_buf = aclCreateDataBuffer(output_device, output_size_);
-        aclmdlAddDatasetBuffer(output_dataset, output_buf);
-
-        // 4. NPU 推理
-        ret = aclmdlExecute(model_id_, input_dataset, output_dataset);
+        // Execute with the preallocated datasets.
+        ret = aclmdlExecute(model_id_, input_dataset_, output_dataset_);
         if (ret != ACL_SUCCESS) {
             fprintf(stderr, "[AscendCL] aclmdlExecute failed: %d\n", ret);
-            aclmdlDestroyDataset(output_dataset);
-            aclDestroyDataBuffer(output_buf);
-            aclrtFree(output_device);
-            aclmdlDestroyDataset(input_dataset);
-            aclDestroyDataBuffer(input_buf);
-            aclrtFree(input_device);
             result.error = ErrorCode::kModelExecuteFailed;
             return result;
         }
 
-        // 5. 拷贝输出到 Host
-        size_t output_elems = output_size_ / sizeof(float);
-        std::vector<float> output_host(output_elems);
-        ret = aclrtMemcpy(output_host.data(), output_size_,
-                          output_device, output_size_,
+        // Copy output to the reusable host buffer.
+        ret = aclrtMemcpy(output_host_.data(), output_size_,
+                          output_device_, output_size_,
                           ACL_MEMCPY_DEVICE_TO_HOST);
         if (ret != ACL_SUCCESS) {
             result.error = ErrorCode::kMemcpyFailed;
         } else {
-            result.logits = std::move(output_host);
+            result.logits = output_host_;
             // 输出 shape [1, T, vocab_size] → 取 T 和 V
             if (output_desc_.shape.size() >= 3) {
-                result.time_steps = static_cast<int>(output_desc_.shape[1]);
-                result.vocab_size  = static_cast<int>(output_desc_.shape[2]);
+                result.time_steps =
+                    static_cast<int>(output_desc_.shape[output_desc_.shape.size() - 2]);
+                result.vocab_size =
+                    static_cast<int>(output_desc_.shape.back());
+            } else if (output_desc_.shape.size() == 2) {
+                result.time_steps = static_cast<int>(output_desc_.shape[0]);
+                result.vocab_size = static_cast<int>(output_desc_.shape[1]);
+            }
+            if (result.time_steps <= 0 || result.vocab_size <= 0 ||
+                static_cast<size_t>(result.time_steps) *
+                    static_cast<size_t>(result.vocab_size) >
+                    result.logits.size()) {
+                fprintf(stderr,
+                        "[AscendCL] Unsupported dynamic output shape; export a "
+                        "fixed [1,T,V] logits model\n");
+                result.error = ErrorCode::kModelExecuteFailed;
+            }
+            if (result.error == ErrorCode::kSuccess &&
+                output_length_device_ && !output_length_host_.empty()) {
+                ret = aclrtMemcpy(
+                    output_length_host_.data(), output_length_size_,
+                    output_length_device_, output_length_size_,
+                    ACL_MEMCPY_DEVICE_TO_HOST);
+                if (ret != ACL_SUCCESS) {
+                    result.error = ErrorCode::kMemcpyFailed;
+                } else {
+                    int64_t token_count = 0;
+                    if (output_length_size_ >= sizeof(int64_t)) {
+                        std::memcpy(
+                            &token_count, output_length_host_.data(),
+                            sizeof(int64_t));
+                    } else if (output_length_size_ >= sizeof(int32_t)) {
+                        int32_t token_count_32 = 0;
+                        std::memcpy(
+                            &token_count_32, output_length_host_.data(),
+                            sizeof(int32_t));
+                        token_count = token_count_32;
+                    }
+                    if (token_count > 0 &&
+                        token_count <= result.time_steps) {
+                        result.time_steps =
+                            static_cast<int>(token_count);
+                        result.logits.resize(
+                            static_cast<size_t>(result.time_steps) *
+                            static_cast<size_t>(result.vocab_size));
+                    } else {
+                        fprintf(stderr,
+                                "[AscendCL] Invalid token length: %lld\n",
+                                static_cast<long long>(token_count));
+                        result.error = ErrorCode::kModelExecuteFailed;
+                    }
+                }
             }
         }
-
-        // 6. 清理
-        aclmdlDestroyDataset(output_dataset);
-        aclDestroyDataBuffer(output_buf);
-        aclrtFree(output_device);
-        aclmdlDestroyDataset(input_dataset);
-        aclDestroyDataBuffer(input_buf);
-        aclrtFree(input_device);
 
         return result;
     }
@@ -210,6 +310,38 @@ public:
     TensorDesc GetOutputDesc() const override { return output_desc_; }
 
     void Destroy() override {
+        if (input_dataset_) {
+            aclmdlDestroyDataset(input_dataset_);
+            input_dataset_ = nullptr;
+        }
+        if (output_dataset_) {
+            aclmdlDestroyDataset(output_dataset_);
+            output_dataset_ = nullptr;
+        }
+        if (input_buffer_) {
+            aclDestroyDataBuffer(input_buffer_);
+            input_buffer_ = nullptr;
+        }
+        if (output_buffer_) {
+            aclDestroyDataBuffer(output_buffer_);
+            output_buffer_ = nullptr;
+        }
+        if (output_length_buffer_) {
+            aclDestroyDataBuffer(output_length_buffer_);
+            output_length_buffer_ = nullptr;
+        }
+        if (input_device_) {
+            aclrtFree(input_device_);
+            input_device_ = nullptr;
+        }
+        if (output_device_) {
+            aclrtFree(output_device_);
+            output_device_ = nullptr;
+        }
+        if (output_length_device_) {
+            aclrtFree(output_length_device_);
+            output_length_device_ = nullptr;
+        }
         if (model_desc_) {
             aclmdlDestroyDesc(model_desc_);
             model_desc_ = nullptr;
@@ -222,16 +354,25 @@ public:
             aclrtDestroyContext(context_);
             context_ = nullptr;
         }
-        aclrtResetDevice(cfg_.device_id);
-        aclFinalize();
+        if (device_set_) {
+            aclrtResetDevice(cfg_.device_id);
+            device_set_ = false;
+        }
+        if (acl_initialized_) {
+            aclFinalize();
+            acl_initialized_ = false;
+        }
         initialized_ = false;
-        fprintf(stdout, "[AscendCL] Destroyed.\n");
+        output_host_.clear();
+        output_length_host_.clear();
     }
 
 private:
     Config      cfg_;
     std::string model_path_;
     bool        initialized_ = false;
+    bool        acl_initialized_ = false;
+    bool        device_set_ = false;
 
     uint32_t     model_id_   = 0xFFFFFFFF;
     aclrtContext context_    = nullptr;
@@ -239,8 +380,19 @@ private:
 
     size_t     input_size_  = 0;
     size_t     output_size_ = 0;
+    size_t     output_length_size_ = 0;
     TensorDesc input_desc_;
     TensorDesc output_desc_;
+    void* input_device_ = nullptr;
+    void* output_device_ = nullptr;
+    void* output_length_device_ = nullptr;
+    aclmdlDataset* input_dataset_ = nullptr;
+    aclmdlDataset* output_dataset_ = nullptr;
+    aclDataBuffer* input_buffer_ = nullptr;
+    aclDataBuffer* output_buffer_ = nullptr;
+    aclDataBuffer* output_length_buffer_ = nullptr;
+    std::vector<float> output_host_;
+    std::vector<unsigned char> output_length_host_;
 };
 
 // Factory

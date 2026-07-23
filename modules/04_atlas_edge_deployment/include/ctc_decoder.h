@@ -9,7 +9,7 @@
 namespace car_asr {
 
 /**
- * @brief CTC贪心解码器
+ * @brief Paraformer/CTC token decoder
  */
 class CTCDecoder {
 public:
@@ -18,6 +18,7 @@ public:
         int   unk_id         = 1;        // unknown token index
         float beam_threshold = 0.0f;     // beam search阈值（仅beam>1）
         bool  use_lm         = false;    // 是否使用语言模型
+        bool  collapse_repeats = true;   // CTC=true; Paraformer NAR=false
     };
 
     CTCDecoder() = default;

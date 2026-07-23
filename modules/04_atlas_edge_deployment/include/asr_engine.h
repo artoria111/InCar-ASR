@@ -11,7 +11,7 @@ namespace car_asr {
 /**
  * @brief 车载ASR推理引擎统一接口
  *
- * 封装 VAD → FBank特征提取 → NPU推理 → CTC解码 的完整管线。
+ * 封装 VAD → FBank/LFR特征提取 → NPU推理 → Token解码 的完整管线。
  * 使用方式：
  *   1. ASREngine::Create(config)   — 创建实例
  *   2. Init(model_path)             — 加载OM模型，初始化NPU
@@ -23,9 +23,10 @@ class ASREngine {
 public:
     struct Config {
         int   device_id        = 0;        // NPU设备ID
-        int   vad_mode         = 2;        // WebRTC VAD aggressiveness (0-3)
+        int   vad_mode         = 2;        // 能量VAD灵敏度 (0-3)
         int   vad_silence_frames = 30;     // 连续静音帧数才判停
-        int   beam_size        = 1;        // CTC beam size（1=贪心）
+        int   beam_size        = 1;        // 解码 beam size（1=贪心）
+        bool  ctc_collapse_repeats = false; // Paraformer NAR=false, CTC=true
         bool  enable_profiling = false;    // 是否采集性能数据
         std::string token_path;            // 词典文件路径
     };
@@ -55,10 +56,10 @@ public:
     virtual std::string Recognize(const std::vector<int16_t>& pcm_data) = 0;
 
     /**
-     * @brief 流式识别（逐帧输入）
+     * @brief 分块输入、末块触发整句识别
      * @param pcm_chunk  音频片段 (16kHz, 16-bit, mono)
      * @param is_end     是否为最后一个片段
-     * @return 当前累积的识别文本
+     * @return 非末块返回空字符串，末块返回整句文本
      */
     virtual std::string RecognizeStream(
         const std::vector<int16_t>& pcm_chunk, bool is_end) = 0;
