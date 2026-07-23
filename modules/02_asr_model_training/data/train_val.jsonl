@@ -1,0 +1,12 @@
+{"key": "train_045", "source": "/root/work/car-asr-engine/test/train_audio/cmd_045.wav", "target": "关闭双闪", "domain": "user_recorded"}
+{"key": "train_010", "source": "/root/work/car-asr-engine/test/train_audio/cmd_010.wav", "target": "温度调到二十六度", "domain": "user_recorded"}
+{"key": "train_022", "source": "/root/work/car-asr-engine/test/train_audio/cmd_022.wav", "target": "查看短信", "domain": "user_recorded"}
+{"key": "train_018", "source": "/root/work/car-asr-engine/test/train_audio/cmd_018.wav", "target": "关闭免提", "domain": "user_recorded"}
+{"key": "train_055", "source": "/root/work/car-asr-engine/test/train_audio/cmd_055.wav", "target": "这辆车是什么型号", "domain": "user_recorded"}
+{"key": "train_020", "source": "/root/work/car-asr-engine/test/train_audio/cmd_020.wav", "target": "打电话给客服", "domain": "user_recorded"}
+{"key": "train_007", "source": "/root/work/car-asr-engine/test/train_audio/cmd_007.wav", "target": "附近有厕所吗", "domain": "user_recorded"}
+{"key": "train_042", "source": "/root/work/car-asr-engine/test/train_audio/cmd_042.wav", "target": "查看车辆状态", "domain": "user_recorded"}
+{"key": "train_014", "source": "/root/work/car-asr-engine/test/train_audio/cmd_014.wav", "target": "风速调到三档", "domain": "user_recorded"}
+{"key": "train_028", "source": "/root/work/car-asr-engine/test/train_audio/cmd_028.wav", "target": "小声点", "domain": "user_recorded"}
+{"key": "train_051", "source": "/root/work/car-asr-engine/test/train_audio/cmd_051.wav", "target": "讲个笑话", "domain": "user_recorded"}
+{"key": "train_038", "source": "/root/work/car-asr-engine/test/train_audio/cmd_038.wav", "target": "打开遮阳帘", "domain": "user_recorded"}
