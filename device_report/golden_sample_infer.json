@@ -1,0 +1,4 @@
+onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
+{"text": "\u6e29\u5ea6\u8c03\u9ad8", "inference_ms": 391.18432998657227, "total_ms": 391.18432998657227, "rtf": 0.09587851225161086}
+onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0
+{"text": "\u6253\u5f00\u7a7a\u8c03", "inference_ms": 321.3920593261719, "total_ms": 321.3920593261719, "rtf": 0.10689240545489742}
