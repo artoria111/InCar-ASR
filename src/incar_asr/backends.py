@@ -109,7 +109,7 @@ class OnnxBackend:
         }
         if self.contract.lengths_name:
             inputs[self.contract.lengths_name] = np.asarray(
-                [features.shape[0]], dtype=np.int64
+                [features.shape[0]], dtype=np.int32
             )
 
         output_names = [self.contract.logits_name]
