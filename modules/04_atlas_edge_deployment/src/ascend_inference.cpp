@@ -1,5 +1,6 @@
 #include "ascend_inference.h"
 #include "acl/acl.h"
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 
@@ -15,6 +16,10 @@ public:
     ~AscendInferenceImpl() override { Destroy(); }
 
     bool Init(const std::string& model_path) override {
+        if (initialized_) {
+            fprintf(stderr, "[AscendCL] Init called twice\n");
+            return false;
+        }
         model_path_ = model_path;
 
         // 1. ACL 初始化
@@ -23,6 +28,7 @@ public:
             fprintf(stderr, "[AscendCL] aclInit failed: %d\n", ret);
             return false;
         }
+        acl_initialized_ = true;
         fprintf(stdout, "[AscendCL] aclInit OK\n");
 
         // 2. 设置设备
@@ -32,6 +38,7 @@ public:
                     cfg_.device_id, ret);
             return false;
         }
+        device_set_ = true;
         fprintf(stdout, "[AscendCL] SetDevice(%d) OK\n", cfg_.device_id);
 
         // 3. 创建上下文
@@ -64,10 +71,24 @@ public:
         size_t num_outputs = aclmdlGetNumOutputs(model_desc_);
         fprintf(stdout, "[AscendCL] Model: %zu inputs, %zu outputs\n",
                 num_inputs, num_outputs);
+        if (num_inputs != 1 || num_outputs != 1) {
+            fprintf(
+                stderr,
+                "[AscendCL] This CTC runtime requires exactly one input and one output\n");
+            return false;
+        }
+        if (aclmdlGetInputDataType(model_desc_, 0) != ACL_FLOAT ||
+            aclmdlGetOutputDataType(model_desc_, 0) != ACL_FLOAT) {
+            fprintf(
+                stderr,
+                "[AscendCL] C++ runtime currently requires float32 model I/O\n");
+            return false;
+        }
 
         // --- 输入Tensor ---
         if (num_inputs > 0) {
             input_size_ = aclmdlGetInputSizeByIndex(model_desc_, 0);
+            input_desc_.elem_size = sizeof(float);
 
             aclmdlIODims dims;
             ret = aclmdlGetInputDims(model_desc_, 0, &dims);
@@ -91,6 +112,7 @@ public:
         // --- 输出Tensor ---
         if (num_outputs > 0) {
             output_size_ = aclmdlGetOutputSizeByIndex(model_desc_, 0);
+            output_desc_.elem_size = sizeof(float);
 
             aclmdlIODims dims;
             ret = aclmdlGetOutputDims(model_desc_, 0, &dims);
@@ -117,25 +139,41 @@ public:
 
     Result Infer(const float* features, int num_frames) override {
         Result result;
-        result.error = ErrorCode::kSuccess;
 
         if (!initialized_) {
             result.error = ErrorCode::kNotInitialized;
             return result;
         }
+        if (!features || num_frames <= 0) {
+            result.error = ErrorCode::kPreprocessFailed;
+            return result;
+        }
 
         // 1. 准备输入数据：FBank特征 [1, num_frames, 80]
         size_t input_bytes = static_cast<size_t>(num_frames) * kFbankDim * sizeof(float);
+        if (input_size_ == 0 || input_size_ % sizeof(float) != 0) {
+            result.error = ErrorCode::kPreprocessFailed;
+            return result;
+        }
+        std::vector<float> input_host(input_size_ / sizeof(float), 0.0f);
+        const size_t copy_bytes = std::min(input_bytes, input_size_);
+        std::memcpy(input_host.data(), features, copy_bytes);
+        if (input_bytes > input_size_) {
+            fprintf(
+                stderr,
+                "[AscendCL] Warning: feature input truncated from %zu to %zu bytes\n",
+                input_bytes, input_size_);
+        }
         void* input_device = nullptr;
-        aclError ret = aclrtMalloc(&input_device, input_bytes,
+        aclError ret = aclrtMalloc(&input_device, input_size_,
                                     ACL_MEM_MALLOC_NORMAL_ONLY);
         if (ret != ACL_SUCCESS) {
             result.error = ErrorCode::kMemcpyFailed;
             return result;
         }
 
-        ret = aclrtMemcpy(input_device, input_bytes,
-                          features, input_bytes,
+        ret = aclrtMemcpy(input_device, input_size_,
+                          input_host.data(), input_size_,
                           ACL_MEMCPY_HOST_TO_DEVICE);
         if (ret != ACL_SUCCESS) {
             aclrtFree(input_device);
@@ -145,7 +183,7 @@ public:
 
         // 2. 创建输入 Dataset
         aclmdlDataset* input_dataset = aclmdlCreateDataset();
-        aclDataBuffer* input_buf = aclCreateDataBuffer(input_device, input_bytes);
+        aclDataBuffer* input_buf = aclCreateDataBuffer(input_device, input_size_);
         aclmdlAddDatasetBuffer(input_dataset, input_buf);
 
         // 3. 创建输出 Dataset + 输出缓冲区
@@ -192,6 +230,20 @@ public:
             if (output_desc_.shape.size() >= 3) {
                 result.time_steps = static_cast<int>(output_desc_.shape[1]);
                 result.vocab_size  = static_cast<int>(output_desc_.shape[2]);
+            } else if (output_desc_.shape.size() == 2) {
+                result.time_steps = static_cast<int>(output_desc_.shape[0]);
+                result.vocab_size = static_cast<int>(output_desc_.shape[1]);
+            }
+            const size_t expected = static_cast<size_t>(
+                std::max(result.time_steps, 0)) *
+                static_cast<size_t>(std::max(result.vocab_size, 0));
+            if (result.time_steps <= 0 || result.vocab_size <= 0 ||
+                expected > result.logits.size()) {
+                fprintf(stderr, "[AscendCL] Unsupported or invalid output shape\n");
+                result.logits.clear();
+                result.error = ErrorCode::kModelExecuteFailed;
+            } else {
+                result.error = ErrorCode::kSuccess;
             }
         }
 
@@ -222,16 +274,23 @@ public:
             aclrtDestroyContext(context_);
             context_ = nullptr;
         }
-        aclrtResetDevice(cfg_.device_id);
-        aclFinalize();
+        if (device_set_) {
+            aclrtResetDevice(cfg_.device_id);
+            device_set_ = false;
+        }
+        if (acl_initialized_) {
+            aclFinalize();
+            acl_initialized_ = false;
+        }
         initialized_ = false;
-        fprintf(stdout, "[AscendCL] Destroyed.\n");
     }
 
 private:
     Config      cfg_;
     std::string model_path_;
     bool        initialized_ = false;
+    bool        acl_initialized_ = false;
+    bool        device_set_ = false;
 
     uint32_t     model_id_   = 0xFFFFFFFF;
     aclrtContext context_    = nullptr;

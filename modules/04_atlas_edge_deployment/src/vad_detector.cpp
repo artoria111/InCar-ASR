@@ -1,34 +1,24 @@
 #include "vad_detector.h"
-#include <cstring>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace car_asr {
 
-VADDetector::~VADDetector() {
-    // 释放WebRTC VAD句柄
-    if (vad_handle_) {
-        // WebRtcVad_Free(vad_handle_);
-        vad_handle_ = nullptr;
-    }
-}
+VADDetector::~VADDetector() = default;
 
 bool VADDetector::Init(const Config& cfg) {
+    if (cfg.aggressiveness < 0 || cfg.aggressiveness > 3 ||
+        cfg.start_frames <= 0 || cfg.end_frames <= 0 ||
+        cfg.frame_ms != 20 || cfg.minimum_rms <= 0.0f ||
+        cfg.noise_alpha < 0.0f || cfg.noise_alpha >= 1.0f) {
+        fprintf(stderr, "[VAD] Invalid configuration\n");
+        return false;
+    }
     cfg_ = cfg;
-
-#ifdef HAS_WEBRTC_VAD
-    // WebRTC VAD 初始化
-    // vad_handle_ = WebRtcVad_Create();
-    // if (!vad_handle_) return false;
-    // WebRtcVad_Init(vad_handle_);
-    // WebRtcVad_set_mode(vad_handle_, cfg_.aggressiveness);
-    fprintf(stdout, "[VAD] WebRTC VAD initialized, mode=%d\n", cfg_.aggressiveness);
-#else
-    // 备用：基于能量的简单VAD
-    fprintf(stdout, "[VAD] Using energy-based VAD fallback (no WebRTC)\n");
-    vad_handle_ = nullptr;
-#endif
-
-    state_ = State::kSilence;
+    fprintf(stdout, "[VAD] Adaptive energy VAD initialized, mode=%d\n",
+            cfg_.aggressiveness);
+    Reset();
     return true;
 }
 
@@ -108,46 +98,23 @@ int VADDetector::Detect(const std::vector<int16_t>& pcm,
 }
 
 bool VADDetector::IsSpeech(const std::vector<int16_t>& frame) {
-#ifdef HAS_WEBRTC_VAD
-    // 调用WebRTC VAD
-    // return WebRtcVad_Process(vad_handle_, kSampleRate,
-    //                          frame.data(), frame.size()) == 1;
-    (void)frame;
-    return false;
-#else
-    // 能量阈值VAD（WebRTC不可用时的备用方案）
-    if (frame.empty()) return false;
+    if (frame.size() != kFrameSamples) return false;
 
-    // 计算短时能量
-    float energy = 0.0f;
+    double energy = 0.0;
     for (auto s : frame) {
-        energy += static_cast<float>(s) * static_cast<float>(s);
+        const double normalized = static_cast<double>(s) / 32768.0;
+        energy += normalized * normalized;
     }
-    energy /= frame.size();
-
-    // 自适应阈值（以帧平均能量的1/4为界）
-    // 简化版：车载环境适配，需根据实际噪声水平调优
-    static float noise_floor = 0.0f;
-    static int   init_frames = 0;
-
-    if (init_frames < 50) {
-        // 前50帧用于估计噪声基准
-        noise_floor += energy;
-        init_frames++;
-        if (init_frames == 50) {
-            noise_floor /= 50.0f;
-            fprintf(stdout, "[VAD] Noise floor estimated: %.2f\n", noise_floor);
-        }
-        return false;
+    const float rms = static_cast<float>(std::sqrt(energy / frame.size()));
+    static const float ratios[] = {1.8f, 2.5f, 3.5f, 5.0f};
+    const float threshold = std::max(
+        cfg_.minimum_rms, noise_floor_ * ratios[cfg_.aggressiveness]);
+    const bool speech = rms >= threshold;
+    if (!speech) {
+        noise_floor_ = cfg_.noise_alpha * noise_floor_
+            + (1.0f - cfg_.noise_alpha) * rms;
     }
-
-    // 动态阈值：噪声基准 * 倍数
-    float threshold = noise_floor * 4.0f;  // mode=2: 4x noise floor
-    if (cfg_.aggressiveness == 3) threshold = noise_floor * 8.0f;   // 更激进
-    if (cfg_.aggressiveness == 1) threshold = noise_floor * 2.0f;   // 更宽松
-
-    return energy > threshold;
-#endif
+    return speech;
 }
 
 void VADDetector::Reset() {
@@ -155,6 +122,7 @@ void VADDetector::Reset() {
     consecutive_speech_  = 0;
     consecutive_silence_ = 0;
     current_position_    = 0;
+    noise_floor_ = cfg_.minimum_rms / 4.0f;
 }
 
 } // namespace car_asr

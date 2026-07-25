@@ -23,7 +23,7 @@ class ASREngine {
 public:
     struct Config {
         int   device_id        = 0;        // NPU设备ID
-        int   vad_mode         = 2;        // WebRTC VAD aggressiveness (0-3)
+        int   vad_mode         = 2;        // energy VAD aggressiveness (0-3)
         int   vad_silence_frames = 30;     // 连续静音帧数才判停
         int   beam_size        = 1;        // CTC beam size（1=贪心）
         bool  enable_profiling = false;    // 是否采集性能数据

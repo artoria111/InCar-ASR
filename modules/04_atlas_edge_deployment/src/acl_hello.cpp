@@ -135,7 +135,15 @@ static bool RunACLHello(int device_id) {
 
 // ============================================================
 int main(int argc, char* argv[]) {
-    int device_id = (argc > 1) ? atoi(argv[1]) : 0;
+    int device_id = 0;
+    if (argc == 2) {
+        device_id = atoi(argv[1]);
+    } else if (argc == 3 && strcmp(argv[1], "--device") == 0) {
+        device_id = atoi(argv[2]);
+    } else if (argc > 1) {
+        fprintf(stderr, "Usage: %s [--device ID]\n", argv[0]);
+        return 2;
+    }
 
     printf("AscendCL Hello World\n");
     printf("Target: NPU device %d\n\n", device_id);

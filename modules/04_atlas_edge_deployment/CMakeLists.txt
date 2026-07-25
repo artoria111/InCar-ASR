@@ -15,30 +15,22 @@ if(NOT ASCEND_TOOLKIT_HOME)
 endif()
 
 set(ACLLIB_DIR      ${ASCEND_TOOLKIT_HOME}/acllib)
-set(ATLAS_INC_DIR   ${ACLLIB_DIR}/include)
+find_path(ATLAS_INC_DIR acl/acl.h
+    PATHS
+        ${ASCEND_TOOLKIT_HOME}/include
+        ${ACLLIB_DIR}/include
+    REQUIRED)
 set(ATLAS_LIB_DIR   ${ACLLIB_DIR}/lib64)
 set(TOOLKIT_LIB_DIR ${ASCEND_TOOLKIT_HOME}/lib64)
 
 # AscendCL libraries
-find_library(ASCENDCL_LIB  ascendcl  PATHS ${ATLAS_LIB_DIR}   REQUIRED)
-find_library(ACL_CBLAS_LIB acl_cblas PATHS ${ATLAS_LIB_DIR}   REQUIRED)
+find_library(ASCENDCL_LIB ascendcl
+    PATHS ${ATLAS_LIB_DIR} ${TOOLKIT_LIB_DIR}
+    REQUIRED)
 
 message(STATUS "AscendCL include:  ${ATLAS_INC_DIR}")
 message(STATUS "AscendCL lib:      ${ATLAS_LIB_DIR}")
 message(STATUS "AscendCL lib (toolkit): ${TOOLKIT_LIB_DIR}")
-
-# ============================================================
-# Optional: WebRTC VAD
-# ============================================================
-find_library(WEBRTC_VAD_LIB webrtc-audio-processing
-    PATHS /usr/lib /usr/local/lib
-    HINTS /usr/lib/aarch64-linux-gnu)
-if(NOT WEBRTC_VAD_LIB)
-    message(WARNING "WebRTC VAD not found — using energy-based fallback")
-else()
-    add_compile_definitions(HAS_WEBRTC_VAD)
-    message(STATUS "WebRTC VAD:        ${WEBRTC_VAD_LIB}")
-endif()
 
 # ============================================================
 # Sources
@@ -59,6 +51,7 @@ set(ENGINE_HEADERS
     include/audio_preprocess.h
     include/vad_detector.h
     include/ctc_decoder.h
+    include/wav_io.h
 )
 
 # ============================================================
@@ -73,14 +66,9 @@ target_include_directories(carasr
 target_link_libraries(carasr
     PUBLIC
         ${ASCENDCL_LIB}
-        ${ACL_CBLAS_LIB}
         pthread
         dl
 )
-if(WEBRTC_VAD_LIB)
-    target_link_libraries(carasr PUBLIC ${WEBRTC_VAD_LIB})
-endif()
-
 # ============================================================
 # CLI Demo executable
 # ============================================================
@@ -98,7 +86,6 @@ target_include_directories(acl-hello
 target_link_libraries(acl-hello
     PRIVATE
         ${ASCENDCL_LIB}
-        ${ACL_CBLAS_LIB}
         pthread
         dl
 )

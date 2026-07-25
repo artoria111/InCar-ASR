@@ -3,6 +3,7 @@
 #include "audio_preprocess.h"
 #include "vad_detector.h"
 #include "ctc_decoder.h"
+#include <algorithm>
 
 namespace car_asr {
 
@@ -11,9 +12,7 @@ public:
     explicit ASREngineImpl(const Config& cfg)
         : cfg_(cfg), metrics_() {}
 
-    ~ASREngineImpl() override {
-        if (ascend_) ascend_->Destroy();
-    }
+    ~ASREngineImpl() override = default;
 
     bool Init(const std::string& model_path) override {
         // 1. 初始化 AscendCL 推理模块
@@ -27,6 +26,13 @@ public:
             fprintf(stderr, "[ASREngine] AscendInference init failed\n");
             return false;
         }
+        const auto input_desc = ascend_->GetInputDesc();
+        if (input_desc.shape.empty() || input_desc.shape.back() != kFbankDim) {
+            fprintf(
+                stderr,
+                "[ASREngine] Model input must end in 80 FBank features\n");
+            return false;
+        }
 
         // 2. 初始化 VAD
         VADDetector::Config vad_cfg;
@@ -38,14 +44,26 @@ public:
             return false;
         }
 
-        // 3. 初始化 CTC 解码器（如果提供了词典）
-        if (!cfg_.token_path.empty()) {
-            CTCDecoder::Config ctc_cfg;
-            ctc_cfg.blank_id = 0;
-            if (!ctc_.Init(cfg_.token_path, ctc_cfg)) {
-                fprintf(stderr, "[ASREngine] CTC decoder init failed\n");
-                return false;
-            }
+        // 3. 初始化 CTC 解码器
+        if (cfg_.token_path.empty()) {
+            fprintf(stderr, "[ASREngine] A token dictionary is required\n");
+            return false;
+        }
+        CTCDecoder::Config ctc_cfg;
+        ctc_cfg.blank_id = 0;
+        if (!ctc_.Init(cfg_.token_path, ctc_cfg)) {
+            fprintf(stderr, "[ASREngine] CTC decoder init failed\n");
+            return false;
+        }
+        const auto output_desc = ascend_->GetOutputDesc();
+        if (!output_desc.shape.empty() && output_desc.shape.back() > 0 &&
+            ctc_.VocabSize() != output_desc.shape.back()) {
+            fprintf(
+                stderr,
+                "[ASREngine] Token count (%d) does not match model vocab (%lld)\n",
+                ctc_.VocabSize(),
+                static_cast<long long>(output_desc.shape.back()));
+            return false;
         }
 
         initialized_ = true;
@@ -54,7 +72,7 @@ public:
     }
 
     std::string Recognize(const std::vector<int16_t>& pcm_data) override {
-        if (!initialized_) return "";
+        if (!initialized_ || pcm_data.empty()) return "";
 
         Timer total_timer;
         metrics_ = PerfMetrics{};
@@ -69,6 +87,8 @@ public:
         if (segments.empty()) {
             fprintf(stdout, "[ASREngine] VAD: no speech detected\n");
             metrics_.total_ms = total_timer.ElapsedMs();
+            metrics_.rtf = metrics_.total_ms /
+                std::max(metrics_.audio_duration_ms, 1e-9);
             return "";
         }
 
@@ -84,6 +104,8 @@ public:
 
         if (speech_pcm.empty()) {
             metrics_.total_ms = total_timer.ElapsedMs();
+            metrics_.rtf = metrics_.total_ms /
+                std::max(metrics_.audio_duration_ms, 1e-9);
             return "";
         }
 
@@ -92,6 +114,13 @@ public:
         std::vector<float> features;
         int num_frames = preprocessor_.ExtractFBank(speech_pcm, features);
         metrics_.preprocess_ms = prep_timer.ElapsedMs();
+        if (num_frames <= 0 || features.empty()) {
+            fprintf(stderr, "[ASREngine] Audio is too short for one feature frame\n");
+            metrics_.total_ms = total_timer.ElapsedMs();
+            metrics_.rtf = metrics_.total_ms /
+                std::max(metrics_.audio_duration_ms, 1e-9);
+            return "";
+        }
 
         fprintf(stdout, "[ASREngine] FBank: %d frames extracted in %.2f ms\n",
                 num_frames, metrics_.preprocess_ms);
@@ -105,6 +134,8 @@ public:
             fprintf(stderr, "[ASREngine] NPU inference failed: %s\n",
                     ErrorStr(result.error));
             metrics_.total_ms = total_timer.ElapsedMs();
+            metrics_.rtf = metrics_.total_ms /
+                std::max(metrics_.audio_duration_ms, 1e-9);
             return "";
         }
 
@@ -130,14 +161,20 @@ public:
 
     std::string RecognizeStream(
         const std::vector<int16_t>& pcm_chunk, bool is_end) override {
-        // TODO: 流式识别 — 第三周实现
-        (void)pcm_chunk;
-        (void)is_end;
-        return "";
+        if (!initialized_) return "";
+        stream_pcm_.insert(stream_pcm_.end(), pcm_chunk.begin(), pcm_chunk.end());
+        if (!is_end) return "";
+        std::vector<int16_t> complete;
+        complete.swap(stream_pcm_);
+        return Recognize(complete);
     }
 
     PerfMetrics GetMetrics() const override { return metrics_; }
-    void Reset() override { vad_.Reset(); metrics_ = PerfMetrics{}; }
+    void Reset() override {
+        vad_.Reset();
+        stream_pcm_.clear();
+        metrics_ = PerfMetrics{};
+    }
     bool IsInitialized() const override { return initialized_; }
 
 private:
@@ -149,6 +186,7 @@ private:
     VADDetector                       vad_;
     AudioPreprocessor                 preprocessor_;
     CTCDecoder                        ctc_;
+    std::vector<int16_t>              stream_pcm_;
 };
 
 // Factory

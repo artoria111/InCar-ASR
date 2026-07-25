@@ -1,0 +1,2 @@
+{"sample_id":"TC0001","clean_audio":"audio/clean/open_ac.wav","noise_audio":"audio/noise/wind.wav","noise_type":"wind","snr_db":5,"transcript":"打开空调","intent":"climate.open","slots":{},"speaker_id":"S01","split":"test","seed":42}
+{"sample_id":"TC0002","clean_audio":"audio/clean/set_temperature.wav","noise_audio":"audio/noise/road.wav","noise_type":"road","snr_db":10,"transcript":"温度调到二十六度","intent":"climate.set_temperature","slots":{"temperature":26},"speaker_id":"S02","split":"test","seed":43}

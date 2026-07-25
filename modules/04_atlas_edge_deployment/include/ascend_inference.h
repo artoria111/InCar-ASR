@@ -32,15 +32,15 @@ public:
      */
     struct TensorDesc {
         std::vector<int64_t> shape;       // e.g. {1, N, 80} for FBank input
-        size_t               elem_size;   // bytes per element
+        size_t               elem_size = 0;   // bytes per element
         std::string          name;
     };
 
     struct Result {
         std::vector<float>  logits;       // CTC logits [T, vocab_size]
-        int                 vocab_size;
-        int                 time_steps;
-        ErrorCode           error;
+        int                 vocab_size = 0;
+        int                 time_steps = 0;
+        ErrorCode           error = ErrorCode::kNotInitialized;
     };
 
     AscendInference() = default;

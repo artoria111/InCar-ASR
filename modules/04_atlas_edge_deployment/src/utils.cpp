@@ -1,6 +1,8 @@
 #include "common.h"
+#include "wav_io.h"
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 #include <cstdint>
 
@@ -10,7 +12,7 @@ namespace car_asr {
  * @brief 读取WAV文件（PCM16格式）
  * @return PCM 16-bit samples, 空vector表示失败
  */
-std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr) {
+std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return {};
 
@@ -25,9 +27,11 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
     }
 
     // Read chunks
-    int16_t bits_per_sample = 16;
-    int32_t sample_rate     = 16000;
-    int16_t num_channels    = 1;
+    int16_t audio_format    = 0;
+    int16_t bits_per_sample = 0;
+    int32_t sample_rate     = 0;
+    int16_t num_channels    = 0;
+    bool found_format       = false;
     std::vector<char> data;
 
     while (file) {
@@ -37,9 +41,10 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
 
         int32_t chunk_size;
         file.read(reinterpret_cast<char*>(&chunk_size), 4);
+        if (!file || chunk_size < 0) return {};
 
         if (std::string(chunk_id, 4) == "fmt ") {
-            int16_t audio_format;
+            if (chunk_size < 16) return {};
             file.read(reinterpret_cast<char*>(&audio_format), 2);
             file.read(reinterpret_cast<char*>(&num_channels), 2);
             file.read(reinterpret_cast<char*>(&sample_rate), 4);
@@ -47,18 +52,33 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
             file.read(reinterpret_cast<char*>(&bits_per_sample), 2);
             // 跳过剩余fmt字节
             if (chunk_size > 16) file.ignore(chunk_size - 16);
+            found_format = true;
         } else if (std::string(chunk_id, 4) == "data") {
-            data.resize(chunk_size);
+            constexpr int32_t kMaximumAudioBytes =
+                kSampleRate * static_cast<int32_t>(sizeof(int16_t)) * 60 * 60;
+            if (static_cast<uint64_t>(chunk_size) >
+                    static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+                chunk_size > kMaximumAudioBytes) {
+                return {};
+            }
+            data.resize(static_cast<size_t>(chunk_size));
             file.read(data.data(), chunk_size);
+            if (!file) return {};
         } else {
             file.ignore(chunk_size);
         }
+        if (chunk_size & 1) file.ignore(1);
     }
 
+    if (!found_format || audio_format != 1 || num_channels != 1 ||
+        bits_per_sample != 16 || sample_rate != kSampleRate ||
+        data.empty() || data.size() % sizeof(int16_t) != 0) {
+        return {};
+    }
     if (sr_out) *sr_out = sample_rate;
 
     // 转换为int16_t
-    int num_samples = data.size() / (bits_per_sample / 8);
+    const size_t num_samples = data.size() / sizeof(int16_t);
     std::vector<int16_t> pcm(num_samples);
     std::memcpy(pcm.data(), data.data(), data.size());
 
@@ -70,7 +90,7 @@ std::vector<int16_t> ReadWavFile(const std::string& path, int* sr_out = nullptr)
  */
 bool WriteWavFile(const std::string& path,
                   const std::vector<int16_t>& pcm,
-                  int sample_rate = 16000) {
+                  int sample_rate) {
     std::ofstream file(path, std::ios::binary);
     if (!file) return false;
 

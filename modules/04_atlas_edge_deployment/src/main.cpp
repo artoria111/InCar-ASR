@@ -10,48 +10,34 @@
  *                 --wav test/test_audio.wav \
  *                 --tokens model/tokens.txt
  *
- *   # 交互模式（使用麦克风）
- *   ./car-asr-cli --model model/paraformer_small_fp16.om --interactive
  */
 
 #include "asr_engine.h"
 #include "common.h"
+#include "wav_io.h"
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <getopt.h>
 
 using namespace car_asr;
 
-// 简单的WAV文件读取（PCM16格式）
-static std::vector<int16_t> ReadWav(const std::string& path, int* sample_rate = nullptr) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        fprintf(stderr, "Cannot open WAV file: %s\n", path.c_str());
-        return {};
+static std::string EscapeJson(const std::string& value) {
+    std::string output;
+    output.reserve(value.size() + 8);
+    for (unsigned char character : value) {
+        switch (character) {
+            case '"': output += "\\\""; break;
+            case '\\': output += "\\\\"; break;
+            case '\b': output += "\\b"; break;
+            case '\f': output += "\\f"; break;
+            case '\n': output += "\\n"; break;
+            case '\r': output += "\\r"; break;
+            case '\t': output += "\\t"; break;
+            default:
+                if (character >= 0x20) output += static_cast<char>(character);
+        }
     }
-
-    // WAV header: 44 bytes
-    char header[44];
-    file.read(header, 44);
-
-    // 验证格式
-    int sr = *reinterpret_cast<int*>(header + 24);
-    int bits = *reinterpret_cast<short*>(header + 34);
-    int channels = *reinterpret_cast<short*>(header + 22);
-    int data_size = *reinterpret_cast<int*>(header + 40);
-
-    if (sample_rate) *sample_rate = sr;
-
-    fprintf(stdout, "[WAV] sr=%d, bits=%d, channels=%d, data_size=%d\n",
-            sr, bits, channels, data_size);
-
-    int num_samples = data_size / (bits / 8);
-    std::vector<int16_t> pcm(num_samples);
-    file.read(reinterpret_cast<char*>(pcm.data()), data_size);
-    file.close();
-
-    return pcm;
+    return output;
 }
 
 static void PrintUsage(const char* prog) {
@@ -62,7 +48,8 @@ static void PrintUsage(const char* prog) {
     printf("  --tokens, -t <path>      Token dictionary file\n");
     printf("  --device, -d <id>        NPU device ID (default: 0)\n");
     printf("  --vad-mode <0-3>         VAD aggressiveness (default: 2)\n");
-    printf("  --interactive, -i         Interactive microphone mode\n");
+    printf("  --beam-size <n>          CTC beam size (default: 1)\n");
+    printf("  --json                    Print a final machine-readable JSON line\n");
     printf("  --help, -h                Show this help\n");
 }
 
@@ -73,7 +60,8 @@ int main(int argc, char* argv[]) {
     std::string token_path = "model/tokens.txt";
     int device_id   = 0;
     int vad_mode    = 2;
-    bool interactive = false;
+    int beam_size   = 1;
+    bool json_output = false;
 
     // Parse arguments
     static struct option long_opts[] = {
@@ -81,20 +69,23 @@ int main(int argc, char* argv[]) {
         {"wav",         required_argument, 0, 'w'},
         {"tokens",      required_argument, 0, 't'},
         {"device",      required_argument, 0, 'd'},
-        {"vad-mode",    required_argument, 0, 0},
-        {"interactive", no_argument,       0, 'i'},
+        {"vad-mode",    required_argument, 0, 1000},
+        {"beam-size",   required_argument, 0, 1001},
+        {"json",        no_argument,       0, 1002},
         {"help",        no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "m:w:t:d:ih", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "m:w:t:d:h", long_opts, nullptr)) != -1) {
         switch (opt) {
             case 'm': model_path  = optarg; break;
             case 'w': wav_path    = optarg; break;
             case 't': token_path  = optarg; break;
             case 'd': device_id   = atoi(optarg); break;
-            case 'i': interactive = true; break;
+            case 1000: vad_mode   = atoi(optarg); break;
+            case 1001: beam_size  = atoi(optarg); break;
+            case 1002: json_output = true; break;
             case 'h':
             default:  PrintUsage(argv[0]); return opt == 'h' ? 0 : 1;
         }
@@ -103,6 +94,10 @@ int main(int argc, char* argv[]) {
     if (model_path.empty()) {
         fprintf(stderr, "Error: --model is required\n");
         PrintUsage(argv[0]);
+        return 1;
+    }
+    if (vad_mode < 0 || vad_mode > 3 || beam_size < 1) {
+        fprintf(stderr, "Error: --vad-mode must be 0-3 and --beam-size must be >= 1\n");
         return 1;
     }
 
@@ -116,6 +111,7 @@ int main(int argc, char* argv[]) {
     ASREngine::Config cfg;
     cfg.device_id = device_id;
     cfg.vad_mode  = vad_mode;
+    cfg.beam_size = beam_size;
     cfg.token_path = token_path;
 
     auto engine = ASREngine::Create(cfg);
@@ -132,9 +128,11 @@ int main(int argc, char* argv[]) {
 
     // 识别
     if (!wav_path.empty()) {
-        auto pcm = ReadWav(wav_path);
+        int sample_rate = 0;
+        auto pcm = ReadWavFile(wav_path, &sample_rate);
         if (pcm.empty()) {
-            fprintf(stderr, "Failed to read WAV file\n");
+            fprintf(stderr,
+                    "Failed to read WAV file; require PCM16 mono at 16000 Hz\n");
             return 1;
         }
 
@@ -149,12 +147,19 @@ int main(int argc, char* argv[]) {
         // 打印性能指标
         auto metrics = engine->GetMetrics();
         metrics.Print();
+        if (json_output) {
+            fprintf(
+                stdout,
+                "{\"text\":\"%s\",\"inference_ms\":%.6f,"
+                "\"total_ms\":%.6f,\"rtf\":%.9f,"
+                "\"sample_rate\":%d,\"device_id\":%d}\n",
+                EscapeJson(text).c_str(), metrics.inference_ms,
+                metrics.total_ms, metrics.rtf, sample_rate, device_id);
+        }
 
-    } else if (interactive) {
-        fprintf(stdout, "Interactive mode not yet implemented.\n");
-        fprintf(stdout, "Use --wav to recognize a WAV file.\n");
     } else {
-        fprintf(stdout, "No input specified. Use --wav or --interactive.\n");
+        fprintf(stderr, "No input specified. Use --wav.\n");
+        return 1;
     }
 
     fprintf(stdout, "\nDone.\n");

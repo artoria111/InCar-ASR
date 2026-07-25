@@ -8,7 +8,7 @@
 namespace car_asr {
 
 /**
- * @brief WebRTC VAD 封装 — 语音活动检测
+ * @brief 自适应能量 VAD — 语音活动检测
  *
  * 对输入音频逐帧（20ms）进行语音/非语音分类。
  * 使用状态机合理切分语音段，避免短促噪声误触和语音截断。
@@ -32,6 +32,8 @@ public:
         int start_frames      = 5;     // 连续语音帧阈值（触发开始）
         int end_frames        = 30;    // 连续静音帧阈值（触发结束）
         int frame_ms          = 20;    // 每帧时长ms（VAD固定20ms）
+        float minimum_rms     = 0.008f;
+        float noise_alpha     = 0.95f;
     };
 
     /**
@@ -85,8 +87,7 @@ private:
     int consecutive_silence_ = 0;
     int current_position_    = 0;    // 当前处理到的采样点位置
 
-    // WebRTC VAD handle (opaque)
-    void* vad_handle_ = nullptr;
+    float noise_floor_ = 0.002f;
 
     // 分帧参数
     static constexpr int kFrameSamples = 320;  // 20ms @ 16kHz = 320 samples

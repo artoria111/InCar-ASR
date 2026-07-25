@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <complex>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -13,6 +14,7 @@ void AudioPreprocessor::PreEmphasis(const std::vector<int16_t>& pcm,
                                      std::vector<float>& out) {
     int n = static_cast<int>(pcm.size());
     out.resize(n);
+    if (n == 0) return;
     out[0] = pcm[0] / 32768.0f;
     for (int i = 1; i < n; i++) {
         out[i] = pcm[i] / 32768.0f - 0.97f * (pcm[i-1] / 32768.0f);
@@ -44,25 +46,38 @@ void AudioPreprocessor::FrameAndWindow(const std::vector<float>& signal,
 
 void AudioPreprocessor::ComputeFFT(const std::vector<float>& frame,
                                     std::vector<float>& magnitude) {
-    // 使用KissFFT作为内置替代（当FFTW3不可用时）
-    // 简化实现：DFT for real input
-    int N = kFftPoints;
-    magnitude.resize(N / 2 + 1, 0.0f);
+    const int n = kFftPoints;
+    std::vector<std::complex<float>> values(n, {0.0f, 0.0f});
+    const int frame_len = std::min(static_cast<int>(frame.size()), kWindowSamples);
+    for (int i = 0; i < frame_len; ++i) {
+        values[i] = {frame[i], 0.0f};
+    }
 
-    // Real DFT (this is slow — production code should use FFTW3)
-    std::vector<float> real(N, 0.0f), imag(N, 0.0f);
-    int frame_len = std::min(static_cast<int>(frame.size()), kWindowSamples);
-    for (int i = 0; i < frame_len; i++) real[i] = frame[i];
-
-    // Slow DFT (placeholder — replace with KissFFT or FFTW3 in production)
-    for (int k = 0; k < N/2 + 1; k++) {
-        float re = 0.0f, im = 0.0f;
-        for (int n = 0; n < N; n++) {
-            float angle = -2.0f * M_PI * k * n / N;
-            re += real[n] * std::cos(angle);
-            im += real[n] * std::sin(angle);
+    // Iterative radix-2 FFT. kFftPoints is fixed at 512.
+    for (int i = 1, j = 0; i < n; ++i) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(values[i], values[j]);
+    }
+    for (int length = 2; length <= n; length <<= 1) {
+        const float angle = -2.0f * static_cast<float>(M_PI) / length;
+        const std::complex<float> root(std::cos(angle), std::sin(angle));
+        for (int start = 0; start < n; start += length) {
+            std::complex<float> factor(1.0f, 0.0f);
+            for (int offset = 0; offset < length / 2; ++offset) {
+                const auto even = values[start + offset];
+                const auto odd = values[start + offset + length / 2] * factor;
+                values[start + offset] = even + odd;
+                values[start + offset + length / 2] = even - odd;
+                factor *= root;
+            }
         }
-        magnitude[k] = std::sqrt(re * re + im * im) / N;
+    }
+
+    magnitude.resize(n / 2 + 1);
+    for (int index = 0; index <= n / 2; ++index) {
+        magnitude[index] = std::norm(values[index]);
     }
 }
 
@@ -129,6 +144,9 @@ void AudioPreprocessor::MelFilterAndLog(const std::vector<float>& magnitude,
 
 int AudioPreprocessor::ExtractFBank(const std::vector<int16_t>& pcm_data,
                                      std::vector<float>& features) {
+    features.clear();
+    if (pcm_data.empty()) return 0;
+
     // Step 1: 预加重
     std::vector<float> pre_emph;
     PreEmphasis(pcm_data, pre_emph);
@@ -150,20 +168,6 @@ int AudioPreprocessor::ExtractFBank(const std::vector<int16_t>& pcm_data,
         std::memcpy(features.data() + f * kFbankDim,
                     frames[f].data(),
                     kFbankDim * sizeof(float));
-    }
-
-    // Step 5: 全局归一化（CMVN简化版）
-    float sum = 0.0f, sq_sum = 0.0f;
-    int total = num_frames * kFbankDim;
-    for (int i = 0; i < total; i++) sum += features[i];
-    float mean = sum / total;
-    for (int i = 0; i < total; i++) {
-        float diff = features[i] - mean;
-        sq_sum += diff * diff;
-    }
-    float std = std::sqrt(sq_sum / total) + 1e-8f;
-    for (int i = 0; i < total; i++) {
-        features[i] = (features[i] - mean) / std;
     }
 
     return num_frames;

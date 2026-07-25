@@ -1,0 +1,19 @@
+{
+  "evaluation": {
+    "command_match_threshold": 0.58,
+    "command_match_margin": 0.04,
+    "peak_limit": 0.99,
+    "random_seed": 42
+  },
+  "streaming": {
+    "frame_ms": 20,
+    "chunk_ms": 40,
+    "start_frames": 3,
+    "end_frames": 15,
+    "pre_roll_ms": 200,
+    "min_utterance_ms": 400,
+    "max_utterance_ms": 15000,
+    "threshold_ratio": 3.0,
+    "minimum_rms": 0.008
+  }
+}

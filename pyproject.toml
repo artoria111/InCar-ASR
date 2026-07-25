@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "incar-asr"
+version = "0.2.0"
+description = "Reproducible in-car ASR evaluation and edge deployment toolkit"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24,<3",
+]
+
+[project.optional-dependencies]
+onnx = ["onnxruntime>=1.16"]
+dev = ["pytest>=7.4,<9"]
+
+[project.scripts]
+incar-asr = "incar_asr.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

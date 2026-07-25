@@ -1,11 +1,28 @@
 #include "ctc_decoder.h"
 #include <fstream>
 #include <algorithm>
-#include <queue>
 #include <cmath>
 #include <cstdio>
+#include <limits>
+#include <map>
 
 namespace car_asr {
+namespace {
+
+constexpr float kNegativeInfinity = -std::numeric_limits<float>::infinity();
+
+float LogAdd(float left, float right) {
+    if (left == kNegativeInfinity) return right;
+    if (right == kNegativeInfinity) return left;
+    const float maximum = std::max(left, right);
+    return maximum + std::log(std::exp(left - maximum) + std::exp(right - maximum));
+}
+
+float TotalScore(const std::pair<float, float>& scores) {
+    return LogAdd(scores.first, scores.second);
+}
+
+}  // namespace
 
 bool CTCDecoder::Init(const std::string& token_path, const Config& cfg) {
     cfg_ = cfg;
@@ -36,6 +53,10 @@ bool CTCDecoder::Init(const std::string& token_path, const Config& cfg) {
 
 std::vector<int> CTCDecoder::GreedySearch(const float* logits, int T, int V) {
     std::vector<int> tokens;
+    if (!logits || T <= 0 || V <= 0 || cfg_.blank_id < 0 ||
+        cfg_.blank_id >= V) {
+        return tokens;
+    }
     int prev_token = cfg_.blank_id;
 
     for (int t = 0; t < T; t++) {
@@ -82,53 +103,107 @@ std::string CTCDecoder::BeamDecode(const float* logits, int T, int V, int beam_s
     if (beam_size <= 1) {
         return GreedyDecode(logits, T, V);
     }
+    if (!logits || T <= 0 || V <= 0 || cfg_.blank_id < 0 ||
+        cfg_.blank_id >= V) {
+        return "";
+    }
 
-    // Simplified beam search
-    struct Beam {
-        std::vector<int> tokens;
-        float score = 0.0f;
-    };
+    // Prefix beam search. Each prefix stores log P(prefix ending in blank)
+    // and log P(prefix ending in a non-blank token).
+    using Prefix = std::vector<int>;
+    using Scores = std::pair<float, float>;
+    std::map<Prefix, Scores> beams;
+    beams[{}] = {0.0f, kNegativeInfinity};
 
-    std::vector<Beam> beams;
-    beams.push_back({{}, 0.0f});
+    for (int t = 0; t < T; ++t) {
+        const float* frame = logits + t * V;
+        const float maximum = *std::max_element(frame, frame + V);
+        float normalizer = 0.0f;
+        for (int token = 0; token < V; ++token) {
+            normalizer += std::exp(frame[token] - maximum);
+        }
+        const float log_normalizer = maximum + std::log(normalizer);
+        std::vector<int> candidate_tokens;
+        candidate_tokens.reserve(std::max(0, V - 1));
+        for (int token = 0; token < V; ++token) {
+            if (token != cfg_.blank_id) candidate_tokens.push_back(token);
+        }
+        const size_t candidate_count = std::min(
+            candidate_tokens.size(), static_cast<size_t>(beam_size * 2));
+        std::partial_sort(
+            candidate_tokens.begin(),
+            candidate_tokens.begin() + candidate_count,
+            candidate_tokens.end(),
+            [frame](int left, int right) {
+                return frame[left] > frame[right];
+            });
+        candidate_tokens.resize(candidate_count);
 
-    for (int t = 0; t < T; t++) {
-        std::vector<Beam> next_beams;
+        std::map<Prefix, Scores> next;
+        for (const auto& beam : beams) {
+            const Prefix& prefix = beam.first;
+            const float blank_score = beam.second.first;
+            const float nonblank_score = beam.second.second;
+            const float total_score = LogAdd(blank_score, nonblank_score);
 
-        for (auto& beam : beams) {
-            // Extend with blank
-            float blank_score = beam.score + logits[t * V + cfg_.blank_id];
-            Beam blank_beam = beam;
-            blank_beam.score = blank_score;
-            next_beams.push_back(blank_beam);
+            auto unchanged_insert = next.emplace(
+                prefix, Scores{kNegativeInfinity, kNegativeInfinity});
+            Scores& unchanged = unchanged_insert.first->second;
+            const float blank_log_prob =
+                frame[cfg_.blank_id] - log_normalizer;
+            unchanged.first = LogAdd(
+                unchanged.first, total_score + blank_log_prob);
 
-            // Extend with non-blank tokens
-            for (int v = 0; v < V; v++) {
-                if (v == cfg_.blank_id) continue;
-
-                float new_score = beam.score + logits[t * V + v];
-                Beam new_beam = beam;
-                if (!beam.tokens.empty() && beam.tokens.back() == v) {
-                    new_beam.score = new_score - 1.0f;  // duplicate penalty
+            for (int token : candidate_tokens) {
+                const float token_log_prob = frame[token] - log_normalizer;
+                if (cfg_.beam_threshold > 0.0f &&
+                    token_log_prob < -cfg_.beam_threshold) {
+                    continue;
                 }
-                new_beam.tokens.push_back(v);
-                new_beam.score = new_score;
-                next_beams.push_back(new_beam);
+                if (!prefix.empty() && prefix.back() == token) {
+                    unchanged.second = LogAdd(
+                        unchanged.second, nonblank_score + token_log_prob);
+                    Prefix extended = prefix;
+                    extended.push_back(token);
+                    auto inserted = next.emplace(
+                        extended, Scores{kNegativeInfinity, kNegativeInfinity});
+                    inserted.first->second.second = LogAdd(
+                        inserted.first->second.second,
+                        blank_score + token_log_prob);
+                } else {
+                    Prefix extended = prefix;
+                    extended.push_back(token);
+                    auto inserted = next.emplace(
+                        extended, Scores{kNegativeInfinity, kNegativeInfinity});
+                    inserted.first->second.second = LogAdd(
+                        inserted.first->second.second,
+                        total_score + token_log_prob);
+                }
             }
         }
 
-        // Keep top beam_size
-        std::sort(next_beams.begin(), next_beams.end(),
-            [](const Beam& a, const Beam& b) { return a.score > b.score; });
-
-        if (next_beams.size() > static_cast<size_t>(beam_size)) {
-            next_beams.resize(beam_size);
+        std::vector<std::pair<Prefix, Scores>> ranked(next.begin(), next.end());
+        std::partial_sort(
+            ranked.begin(),
+            ranked.begin() + std::min(static_cast<size_t>(beam_size), ranked.size()),
+            ranked.end(),
+            [](const auto& left, const auto& right) {
+                return TotalScore(left.second) > TotalScore(right.second);
+            });
+        beams.clear();
+        const size_t keep = std::min(static_cast<size_t>(beam_size), ranked.size());
+        for (size_t index = 0; index < keep; ++index) {
+            beams.emplace(std::move(ranked[index]));
         }
-        beams = std::move(next_beams);
     }
 
     if (beams.empty()) return "";
-    return TokenIdsToText(beams[0].tokens);
+    const auto best = std::max_element(
+        beams.begin(), beams.end(),
+        [](const auto& left, const auto& right) {
+            return TotalScore(left.second) < TotalScore(right.second);
+        });
+    return TokenIdsToText(best->first);
 }
 
 } // namespace car_asr
