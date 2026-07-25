@@ -183,8 +183,8 @@ class OnnxBackend:
             )
         if self.contract.lengths_name:
             length_input = inputs[self.contract.lengths_name]
-            if length_input.type != "tensor(int64)":
-                raise ValueError("length input must use int64")
+            if length_input.type not in ("tensor(int64)", "tensor(int32)"):
+                raise ValueError("length input must use int64 or int32")
         logits_output = outputs[self.contract.logits_name]
         expected_output_type = f"tensor({self.contract.output_dtype.replace('32', '')})"
         if logits_output.type != expected_output_type:
@@ -194,8 +194,8 @@ class OnnxBackend:
             )
         if self.contract.output_lengths_name:
             length_output = outputs[self.contract.output_lengths_name]
-            if length_output.type != "tensor(int64)":
-                raise ValueError("output length tensor must use int64")
+            if length_output.type not in ("tensor(int64)", "tensor(int32)"):
+                raise ValueError("output length tensor must use int64 or int32")
 
 
 class SubprocessBackend:
