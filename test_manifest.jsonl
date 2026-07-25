@@ -1,0 +1,56 @@
+{"sample_id": "TC0001", "clean_audio": "/root/work/car-asr-engine/test/tiny_example.wav", "transcript": "温度调高", "intent": "climate.set_temperature", "speaker_id": "S01", "split": "test", "seed": 42, "audio_sha256": "0d1f8db0adbcc2df"}
+{"sample_id": "TC0002", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "transcript": "打开空调", "intent": "climate.open", "speaker_id": "S01", "split": "test", "seed": 42, "audio_sha256": "533853ea03b99d11"}
+{"sample_id": "TC0003", "clean_audio": "/root/work/car-asr-engine/test/test2.wav", "transcript": "导航回家播放音乐关闭车窗打开天窗温度调高", "intent": null, "speaker_id": "S01", "split": "test", "seed": 42, "audio_sha256": "22f072fef7542697"}
+{"sample_id": "TC0004", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_000.wav", "transcript": "导航回家", "speaker_id": "S02", "split": "test", "seed": 4}
+{"sample_id": "TC0005", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_001.wav", "transcript": "前面堵不堵", "speaker_id": "S02", "split": "test", "seed": 5}
+{"sample_id": "TC0006", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_002.wav", "transcript": "换一条路线", "speaker_id": "S02", "split": "test", "seed": 6}
+{"sample_id": "TC0007", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_003.wav", "transcript": "避开收费站", "speaker_id": "S02", "split": "test", "seed": 7}
+{"sample_id": "TC0008", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_004.wav", "transcript": "去最近的医院", "speaker_id": "S02", "split": "test", "seed": 8}
+{"sample_id": "TC0009", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_005.wav", "transcript": "去附近的餐厅", "speaker_id": "S02", "split": "test", "seed": 9}
+{"sample_id": "TC0010", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_006.wav", "transcript": "带我去最近的超市", "speaker_id": "S02", "split": "test", "seed": 10}
+{"sample_id": "TC0011", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_007.wav", "transcript": "附近有厕所吗", "speaker_id": "S02", "split": "test", "seed": 11}
+{"sample_id": "TC0012", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_008.wav", "transcript": "打开空调", "speaker_id": "S02", "split": "test", "seed": 12}
+{"sample_id": "TC0013", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_009.wav", "transcript": "关闭空调", "speaker_id": "S02", "split": "test", "seed": 13}
+{"sample_id": "TC0014", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_010.wav", "transcript": "温度调到二十六度", "speaker_id": "S02", "split": "test", "seed": 14}
+{"sample_id": "TC0015", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_011.wav", "transcript": "风量调大一点", "speaker_id": "S02", "split": "test", "seed": 15}
+{"sample_id": "TC0016", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_012.wav", "transcript": "风量调小一点", "speaker_id": "S02", "split": "test", "seed": 16}
+{"sample_id": "TC0017", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_013.wav", "transcript": "空调调到二十二度", "speaker_id": "S02", "split": "test", "seed": 17}
+{"sample_id": "TC0018", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_014.wav", "transcript": "风速调到三档", "speaker_id": "S02", "split": "test", "seed": 18}
+{"sample_id": "TC0019", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_015.wav", "transcript": "出风口朝上", "speaker_id": "S02", "split": "test", "seed": 19}
+{"sample_id": "TC0020", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_016.wav", "transcript": "打电话给张三", "speaker_id": "S02", "split": "test", "seed": 20}
+{"sample_id": "TC0021", "clean_audio": "/root/work/car-asr-engine/test/train_audio/cmd_017.wav", "transcript": "回拨刚才的电话", "speaker_id": "S02", "split": "test", "seed": 21}
+{"sample_id": "TC0022", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "white", "snr_db": 0, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 154}
+{"sample_id": "TC0023", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "white", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 161}
+{"sample_id": "TC0024", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "white", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 168}
+{"sample_id": "TC0025", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "white", "snr_db": 15, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 175}
+{"sample_id": "TC0026", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "white", "snr_db": 20, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 182}
+{"sample_id": "TC0027", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "engine", "snr_db": 0, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 189}
+{"sample_id": "TC0028", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "engine", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 196}
+{"sample_id": "TC0029", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "engine", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 203}
+{"sample_id": "TC0030", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "engine", "snr_db": 15, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 210}
+{"sample_id": "TC0031", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "engine", "snr_db": 20, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 217}
+{"sample_id": "TC0032", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "wind", "snr_db": 0, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 224}
+{"sample_id": "TC0033", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "wind", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 231}
+{"sample_id": "TC0034", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "wind", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 238}
+{"sample_id": "TC0035", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "wind", "snr_db": 15, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 245}
+{"sample_id": "TC0036", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "wind", "snr_db": 20, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 252}
+{"sample_id": "TC0037", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "road", "snr_db": 0, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 259}
+{"sample_id": "TC0038", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "road", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 266}
+{"sample_id": "TC0039", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "road", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 273}
+{"sample_id": "TC0040", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "road", "snr_db": 15, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 280}
+{"sample_id": "TC0041", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac.wav", "noise_type": "road", "snr_db": 20, "transcript": "打开空调", "speaker_id": "S03", "split": "test", "seed": 287}
+{"sample_id": "TC0042", "clean_audio": "/root/work/car-asr-engine/test/tiny_example.wav", "noise_type": "white", "snr_db": 5, "transcript": "温度调高", "speaker_id": "S04", "split": "test", "seed": 126}
+{"sample_id": "TC0043", "clean_audio": "/root/work/car-asr-engine/test/tiny_example.wav", "noise_type": "white", "snr_db": 10, "transcript": "温度调高", "speaker_id": "S04", "split": "test", "seed": 129}
+{"sample_id": "TC0044", "clean_audio": "/root/work/car-asr-engine/test/tiny_example.wav", "noise_type": "white", "snr_db": 15, "transcript": "温度调高", "speaker_id": "S04", "split": "test", "seed": 132}
+{"sample_id": "TC0045", "clean_audio": "/root/work/car-asr-engine/test/car_engine_snr5.wav", "noise_type": "engine", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 495}
+{"sample_id": "TC0046", "clean_audio": "/root/work/car-asr-engine/test/car_engine_snr10.wav", "noise_type": "engine", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 506}
+{"sample_id": "TC0047", "clean_audio": "/root/work/car-asr-engine/test/car_wind_snr5.wav", "noise_type": "wind", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 517}
+{"sample_id": "TC0048", "clean_audio": "/root/work/car-asr-engine/test/car_wind_snr10.wav", "noise_type": "wind", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 528}
+{"sample_id": "TC0049", "clean_audio": "/root/work/car-asr-engine/test/car_road_snr5.wav", "noise_type": "road", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 539}
+{"sample_id": "TC0050", "clean_audio": "/root/work/car-asr-engine/test/car_road_snr10.wav", "noise_type": "road", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 550}
+{"sample_id": "TC0051", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac_snr5.wav", "noise_type": "white", "snr_db": 5, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 561}
+{"sample_id": "TC0052", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac_snr10.wav", "noise_type": "white", "snr_db": 10, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 572}
+{"sample_id": "TC0053", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac_snr15.wav", "noise_type": "white", "snr_db": 15, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 583}
+{"sample_id": "TC0054", "clean_audio": "/root/work/car-asr-engine/test/test_open_ac_snr20.wav", "noise_type": "white", "snr_db": 20, "transcript": "打开空调", "speaker_id": "S05", "split": "test", "seed": 594}
+{"sample_id": "TC0055", "clean_audio": "/root/work/car-asr-engine/test/tiny_example_snr5.wav", "noise_type": "white", "snr_db": 5, "transcript": "温度调高", "speaker_id": "S05", "split": "test", "seed": 605}
+{"sample_id": "TC0056", "clean_audio": "/root/work/car-asr-engine/test/tiny_example_snr10.wav", "noise_type": "white", "snr_db": 10, "transcript": "温度调高", "speaker_id": "S05", "split": "test", "seed": 616}
