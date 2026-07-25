@@ -156,24 +156,27 @@ class CommandMatch:
 
 
 class CommandMatcher:
-    """Fuzzy command matcher with phonetic awareness for Chinese ASR errors.
+    """Fuzzy command matcher with phonetic + semantic awareness.
 
     Matching strategy (tried in order):
     1. Regex-based dynamic matching (temperature, phone, navigation patterns)
     2. Pinyin-aware combined similarity against the command catalog
     3. Keyword-based fallback when full-sentence confidence is marginal
+    4. Semantic embedding match via bge-small-zh ONNX (when enabled)
 
-    The combined similarity blends character-level edit distance and
-    pinyin-level edit distance, weighting pinyin more heavily because
-    Chinese ASR errors are predominantly homophone substitutions.
+    The combined similarity blends character-level, pinyin-level, and
+    optionally semantic embedding similarity for robust matching against
+    natural language variations.
     """
 
     def __init__(
         self,
         catalog: Optional[Sequence[Command]] = None,
-        threshold: float = 0.52,
-        minimum_margin: float = 0.03,
+        threshold: float = 0.38,
+        minimum_margin: float = 0.02,
         pinyin_weight: float = 0.6,
+        semantic_weight: float = 0.35,
+        enable_semantic: bool = True,
     ):
         self.catalog = list(catalog or build_default_catalog())
         if not self.catalog:
@@ -181,9 +184,26 @@ class CommandMatcher:
         self.threshold = float(threshold)
         self.minimum_margin = float(minimum_margin)
         self.pinyin_weight = float(pinyin_weight)
+        self.semantic_weight = float(semantic_weight)
+        self.enable_semantic = enable_semantic
         self._normalized = [normalize_text(item.text) for item in self.catalog]
         # Pre-compute pinyin for all catalog entries (expensive, do once)
         self._pinyin = [_to_pinyin(n) for n in self._normalized]
+        # Lazy-loaded embedding matcher
+        self._embedding: Any = None
+
+    def _get_embedding_matcher(self):
+        """Lazy-load the semantic embedding matcher (expensive, ~0.3s)."""
+        if self._embedding is None and self.enable_semantic:
+            try:
+                from .embeddings import EmbeddingMatcher
+
+                self._embedding = EmbeddingMatcher()
+                self._embedding.index_catalog(self._normalized)
+            except (ImportError, FileNotFoundError) as exc:
+                # Model not available — disable semantic matching silently
+                self.enable_semantic = False
+        return self._embedding
 
     def match(self, text: str) -> CommandMatch:
         normalized = normalize_text(text)
@@ -209,6 +229,7 @@ class CommandMatcher:
 
         # 3. Combined character + pinyin similarity against catalog
         input_pinyin = _to_pinyin(corrected_normalized)
+        direction_boost = _direction_boost(corrected_normalized)
         scored = sorted(
             (
                 (
@@ -218,6 +239,10 @@ class CommandMatcher:
                         candidate,
                         self._pinyin[idx],
                         self.pinyin_weight,
+                    ) + (
+                        # Apply direction keyword boost
+                        sum(b for kw, b in (direction_boost or {}).items() if kw in candidate)
+                        if direction_boost else 0.0
                     ),
                     idx,
                 )
@@ -227,12 +252,73 @@ class CommandMatcher:
         )
         best_score, best_index = scored[0]
         second_score = scored[1][0] if len(scored) > 1 else 0.0
+
+        # 4. Semantic embedding enhancement
+        # Strategy: when text similarity is weak, use embedding to find semantically
+        # related candidates. Blend text + semantic scores with adaptive weighting.
+        if self.enable_semantic and best_score < 0.90:
+            emb = self._get_embedding_matcher()
+            if emb is not None:
+                try:
+                    semantic_sims = emb.all_similarities(corrected_normalized)
+                    if len(semantic_sims) == len(scored):
+                        top_sem_score = float(semantic_sims.max())
+
+                        # Adaptive semantic weight
+                        if best_score < 0.30 and top_sem_score > 0.55:
+                            dyn_weight = 0.65
+                        elif best_score < 0.45 and top_sem_score > 0.50:
+                            dyn_weight = 0.50
+                        elif best_score < 0.60 and top_sem_score > 0.55:
+                            dyn_weight = self.semantic_weight
+                        else:
+                            dyn_weight = self.semantic_weight * 0.7
+
+                        # Blend scores per candidate, then apply direction boost post-blend
+                        blended = []
+                        for (text_score, idx) in scored:
+                            sem_score = float(semantic_sims[idx])
+                            blend = (1.0 - dyn_weight) * text_score + dyn_weight * sem_score
+                            # Post-blend direction boost (not diluted by semantic weight)
+                            if direction_boost:
+                                candidate = self._normalized[idx]
+                                for kw, b in direction_boost.items():
+                                    if kw in candidate:
+                                        blend += b
+                            blended.append((blend, idx))
+                        blended.sort(reverse=True)
+                        best_score, best_index = blended[0]
+                        second_score = blended[1][0] if len(blended) > 1 else 0.0
+                except Exception:
+                    pass  # Embedding failure -> fall back to text-only scores
+
         margin = best_score - second_score
+
+        # Determine effective margin: relax when semantic similarity is high.
+        # When the top semantic score > 0.60 and text similarity is poor (< 0.40),
+        # the input is likely a natural paraphrase — skip margin rejection entirely.
+        effective_margin = self.minimum_margin
+        skip_margin = False
+        try:
+            if self.enable_semantic and self._embedding is not None:
+                sem_sims = self._embedding.all_similarities(corrected_normalized)
+                if len(sem_sims) > best_index:
+                    top_sem = float(sem_sims[best_index])
+                    best_text_score = scored[0][0] if scored else 0.0
+                    if top_sem > 0.60 and best_text_score < 0.40:
+                        skip_margin = True  # Semantic rescue: novel phrasing
+                    elif top_sem > 0.55:
+                        effective_margin = 0.005
+                    elif top_sem > 0.48:
+                        effective_margin = 0.01
+        except Exception:
+            pass
+
         rejected = best_score < self.threshold or (
-            margin < self.minimum_margin and best_score < 0.999
+            not skip_margin and margin < effective_margin and best_score < 0.999
         )
 
-        # 4. Keyword-aware fallback: if rejected but keywords overlap, rescue it
+        # 5. Keyword-aware fallback
         if rejected:
             keyword_match = _keyword_fallback_match(
                 corrected_normalized, self.catalog, self._normalized
@@ -725,6 +811,49 @@ def _match_dynamic_command(normalized: str) -> Optional[Command]:
 def _similarity(left: str, right: str) -> float:
     longest = max(len(left), len(right), 1)
     return 1.0 - edit_distance(left, right) / longest
+
+
+def _direction_boost(text: str) -> Optional[Dict[str, float]]:
+    """Detect directional keywords and return a boost map for candidates.
+
+    When a user says "关掉", candidates containing "关" get +0.05,
+    candidates containing "开" get -0.03. This breaks ties between
+    semantically opposite commands that the embedding model can't distinguish.
+    """
+    boosts: Dict[str, float] = {}
+
+    # Close/off/stop indicators
+    if any(kw in text for kw in ["关", "停", "熄", "禁", "拒", "挂", "除", "小"]):
+        boosts["关"] = 0.06
+        boosts["停"] = 0.06
+        boosts["拒"] = 0.06
+        boosts["挂"] = 0.06
+        boosts["关"] = 0.06
+        boosts["小"] = 0.04
+        boosts["低"] = 0.04
+
+    # Open/on/start indicators
+    if any(kw in text for kw in ["开", "启", "打", "播", "放", "接", "大"]):
+        boosts["开"] = 0.06
+        boosts["启"] = 0.06
+        boosts["播"] = 0.06
+        boosts["接"] = 0.04
+        boosts["大"] = 0.04
+        boosts["高"] = 0.04
+
+    # Temperature direction
+    if "热" in text and "加热" not in text:
+        boosts["低"] = 0.05  # Hot -> lower temp
+    if "冷" in text or "冻" in text:
+        boosts["高"] = 0.05  # Cold -> higher temp
+
+    # Speed/volume direction
+    if "快" in text:
+        boosts["大"] = 0.04
+    if "慢" in text:
+        boosts["小"] = 0.04
+
+    return boosts if boosts else None
 
 
 COMMON_CONFUSIONS: Mapping[str, str] = {
