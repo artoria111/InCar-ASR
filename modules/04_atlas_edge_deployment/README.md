@@ -1,64 +1,81 @@
-# Atlas 端侧 CTC 推理模块
+# Atlas Edge Deployment — Huawei Atlas 200I DK A2
 
-目标设备为 Atlas 200I DK A2 / Ascend 310B 系列。当前模块实现：
+This module contains everything needed to take a trained ASR model and run it on the Huawei Atlas 200I DK A2 board (Ascend 310B NPU, 24 TOPS INT8, 8 W, 3.4 GB RAM).
 
-- AscendCL 初始化、OM 加载、H2D/执行/D2H 和安全释放。
-- 16 kHz PCM16 mono WAV 严格解析。
-- 80 维 power FBank 和 radix-2 FFT。
-- 自适应能量 VAD。
-- CTC greedy 与 prefix beam search。
-- 单条 CLI 及末行 JSON 输出。
-- 不依赖 CANN 的便携核心测试。
+The code is split into two clearly-labeled directories so it is obvious what runs where:
 
-## 模型要求
-
-当前 C++ 运行时要求单输入、单输出、float32 I/O：
-
-```text
-input : [1, T, 80] float32 FBank
-output: [1, U, V] float32 CTC logits
+```
+modules/04_atlas_edge_deployment/
+├── README.md             ← this file
+├── local/                ← Source code that is developed on the PC, NOT deployed
+├── board/                ← Source code that runs on the Atlas 200I DK A2 board
+└── test/                 ← Local tests for the native C++ engine (no Atlas required)
 ```
 
-完整 Paraformer、多输入模型、560 维 LFR 输入和非 float32 I/O 不能直接运行。正式模型必须先与 `configs/model_contract_atlas_ctc.example.json` 对齐。
+## `local/` — code developed on the PC
 
-## 编译
+Files here are **never** copied to the board. They exist for development, benchmarking, and the project's evaluation framework.
 
-```bash
-source scripts/env_setup.sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j"$(nproc)"
-```
+| File / Dir | Purpose |
+|---|---|
+| `src/` | C++ source for the native Atlas ASR engine (`ascend_inference.cpp`, `audio_preprocess.cpp`, `vad_detector.cpp`, `ctc_decoder.cpp`, `acl_hello.cpp`, `asr_engine.cpp`, `main.cpp`, `utils.cpp`). |
+| `include/` | C++ headers (`asr_engine.h`, `acl_hello.h`, `vad_detector.h`, etc.). |
+| `tests/` | xUnit-style `test_core.cpp` — runs without CANN, useful for CI. |
+| `CMakeLists.txt` | CMake build for the native engine (`car-asr-cli` executable, `libcarasr.so`). |
+| `atc_convert.sh` | ONNX → OM offline conversion. |
+| `env_setup.sh` | Sets `ASCEND_HOME` and other env vars for CANN. |
+| `profile.sh` | `profile.sh --model ... --wav ...` for board-side NPU profiling. |
+| `cockpit_server.py` | Older prototype server, superseded by `board/cockpit_v2.py`. Kept for historical comparison. |
+| `streaming_demo.py` | Older streaming demo, superseded by `incar-asr stream` in `src/incar_asr/streaming.py`. |
 
-## 运行
+## `board/` — code that actually runs on the Atlas 200I DK A2
 
-```bash
-./build/acl-hello --device 0
+Files here mirror what is checked out at `/root/work/car-asr-engine/` on the board itself. They are intentionally **not** in the Python package's import path — they live outside the src tree because they are deployable artifacts.
 
-./build/car-asr-cli \
-  --model /path/to/model.om \
-  --tokens /path/to/tokens.txt \
-  --wav /path/to/16k_mono_pcm16.wav \
-  --device 0 \
-  --vad-mode 2 \
-  --beam-size 1 \
-  --json
-```
+| File | Purpose |
+|---|---|
+| `cockpit_v2.py` | Flask HTTP service. Loads sherpa-onnx Paraformer-zh-small INT8 (79 MB), runs FBank/LFR/CMVN front-end, decodes tokens, applies fuzzy ASR correction (~50-entry `_FUZZY_MAP`), parses commands, returns JSON. End-to-end ~370 ms on CPU. |
+| `cockpit_index.html` | Browser UI — Chinese-localised fork of Liquid4All audio-car-cockpit (HVAC, windows, music, navigation, doors, vehicle controls). |
+| `cockpit_asr_bridge.js` | WebRTC push-to-talk bridge — captures WebM blob, POSTs to `/api/recognize`, dispatches returned `actions` to `cockpitController`. |
+| `README.md` | Detailed deploy instructions, endpoints, design notes for `cockpit_v2.py`. |
 
-设备组完整步骤、批测和回传要求见仓库根目录的 `docs/设备组运行与交接手册.md`。
+> Files in this directory are **also deployed** at `/root/work/car-asr-engine/scripts/` and `/root/work/car-asr-engine/static/` on the board.
 
-## 无设备核心测试
+## `test/` — local C++ engine tests
+
+Standalone tests that don't require CANN or an Atlas board. Used in CI to catch regressions on the C++ engine before deploying.
 
 ```bash
 c++ -std=c++17 -O2 -Wall -Wextra -Werror \
-  -Iinclude \
-  tests/test_core.cpp \
-  src/audio_preprocess.cpp \
-  src/vad_detector.cpp \
-  src/ctc_decoder.cpp \
-  src/utils.cpp \
-  -o /tmp/incar-asr-core-tests
-
+    -Iinclude \
+    tests/test_core.cpp \
+    src/audio_preprocess.cpp \
+    src/vad_detector.cpp \
+    src/ctc_decoder.cpp \
+    src/utils.cpp \
+    -o /tmp/incar-asr-core-tests
 /tmp/incar-asr-core-tests
 ```
 
-这项测试不验证 ACL、OM 数值一致性、真机延迟或功耗。
+## Reproducing the on-board deploy
+
+```bash
+# On the PC
+cmake -S modules/04_atlas_edge_deployment/local \
+      -B modules/04_atlas_edge_deployment/local/build \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build modules/04_atlas_edge_deployment/local/build -j
+
+# Sync the board-side artefacts
+scp modules/04_atlas_edge_deployment/local/build/car-asr-cli root@192.168.X.X:/root/work/car-asr-engine/scripts/
+scp modules/04_atlas_edge_deployment/board/cockpit_v2.py root@192.168.X.X:/root/work/car-asr-engine/scripts/
+scp modules/04_atlas_edge_deployment/board/cockpit_index.html root@192.168.X.X:/root/work/car-asr-engine/static/
+scp modules/04_atlas_edge_deployment/board/cockpit_asr_bridge.js root@192.168.X.X:/root/work/car-asr-engine/static/
+
+# On the board
+setsid /usr/bin/python3 -u /root/work/car-asr-engine/scripts/cockpit_v2.py &>/tmp/cockpit.log &
+```
+
+## Why is the layout like this?
+
+The C++ NPU engine (`local/`) is cross-compiled on the PC and copied to the board as a binary. The Python cockpit (`board/`) is pushed as plain source because it's small and tied to a specific model + corpus. Keeping them in separate directories makes it obvious at a glance which side a file belongs to.
