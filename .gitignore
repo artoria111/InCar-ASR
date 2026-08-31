@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+venv/
+
+# Builds and generated reports
+build/
+dist/
+*.egg-info/
+reports/
+results/
+device_report/
+
+# Large or machine-specific artifacts
+*.onnx
+*.om
+*.pth
+*.pt
+*.ckpt
+*.wav
+*.flac
+*.pcm
+data/
+models/
+
+# Editors and OS files
+.DS_Store
+.idea/
+.vscode/

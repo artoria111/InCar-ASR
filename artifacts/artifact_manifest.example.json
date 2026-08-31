@@ -1,0 +1,19 @@
+{
+  "model": {
+    "file": "model.onnx",
+    "source": "replace-with-download-or-internal-storage-location",
+    "sha256": "replace-with-sha256",
+    "license": "replace-with-license",
+    "size_bytes": 0
+  },
+  "tokens": {
+    "file": "tokens.json",
+    "source": "replace-with-source",
+    "sha256": "replace-with-sha256"
+  },
+  "cmvn": {
+    "file": "cmvn.json",
+    "source": "replace-with-source",
+    "sha256": "replace-with-sha256"
+  }
+}

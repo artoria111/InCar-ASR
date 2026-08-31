@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "model_name": "replace-with-atlas-ctc-model",
+  "backend": "ascendcl",
+  "model_path": "../artifacts/model.om",
+  "tokens_path": "../artifacts/tokens.txt",
+  "sample_rate": 16000,
+  "input": {
+    "features_name": "speech",
+    "lengths_name": null,
+    "shape": [1, 498, 80],
+    "dtype": "float32"
+  },
+  "output": {
+    "logits_name": "logits",
+    "lengths_name": null,
+    "dtype": "float32"
+  },
+  "decoder": {
+    "type": "ctc",
+    "blank_id": 0,
+    "special_token_ids": [0, 1, 2, 3]
+  },
+  "frontend": {
+    "sample_rate": 16000,
+    "frame_length_ms": 25,
+    "frame_shift_ms": 10,
+    "fft_size": 512,
+    "mel_bins": 80,
+    "preemphasis": 0.97,
+    "spectrum": "power",
+    "lfr_m": 1,
+    "lfr_n": 1,
+    "lfr_padding": "edge",
+    "cmvn_means": [],
+    "cmvn_scales": []
+  }
+}

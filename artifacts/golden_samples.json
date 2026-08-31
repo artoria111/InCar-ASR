@@ -1,0 +1,96 @@
+{
+  "results": [
+    {
+      "id": "GS01",
+      "audio": "tiny_example.wav",
+      "ref": "温度调高",
+      "hyp": "温度调高",
+      "match": "PASS",
+      "ms": 402,
+      "dur": 4.1
+    },
+    {
+      "id": "GS02",
+      "audio": "test_open_ac.wav",
+      "ref": "打开空调",
+      "hyp": "打开空调",
+      "match": "PASS",
+      "ms": 356,
+      "dur": 3.0
+    },
+    {
+      "id": "GS03",
+      "audio": "test2.wav",
+      "ref": "导航回家播放音乐关闭车窗打开天窗温度调高",
+      "hyp": "导航回家播放音乐关闭车窗打开天窗温度调高",
+      "match": "PASS",
+      "ms": 1405,
+      "dur": 16.1
+    },
+    {
+      "id": "GS04",
+      "audio": "car_engine_snr5.wav",
+      "ref": "打开空调",
+      "hyp": "打开空调",
+      "match": "PASS",
+      "ms": 302,
+      "dur": 3.0
+    },
+    {
+      "id": "GS05",
+      "audio": "car_wind_snr5.wav",
+      "ref": "打开空调",
+      "hyp": "打开空调",
+      "match": "PASS",
+      "ms": 358,
+      "dur": 3.0
+    },
+    {
+      "id": "GS06",
+      "audio": "car_road_snr5.wav",
+      "ref": "打开空调",
+      "hyp": "打开空调",
+      "match": "PASS",
+      "ms": 333,
+      "dur": 3.0
+    },
+    {
+      "id": "GS07",
+      "audio": "test_open_ac_snr10.wav",
+      "ref": "打开空调",
+      "hyp": "打开空调",
+      "match": "PASS",
+      "ms": 316,
+      "dur": 3.0
+    },
+    {
+      "id": "GS08",
+      "audio": "tiny_example_snr10.wav",
+      "ref": "温度调高",
+      "hyp": "温度调高",
+      "match": "PASS",
+      "ms": 396,
+      "dur": 4.1
+    },
+    {
+      "id": "GS09",
+      "audio": "cmd_008.wav",
+      "ref": "打开空调",
+      "hyp": "附近有厕所",
+      "match": "FAIL",
+      "ms": 208,
+      "dur": 1.0
+    },
+    {
+      "id": "GS10",
+      "audio": "cmd_000.wav",
+      "ref": "导航回家",
+      "hyp": "导航回家",
+      "match": "PASS",
+      "ms": 158,
+      "dur": 0.8
+    }
+  ],
+  "passed": 9,
+  "total": 10
+}

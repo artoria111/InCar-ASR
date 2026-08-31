@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "model_name": "replace-with-final-model",
+  "backend": "onnxruntime",
+  "model_path": "../artifacts/model.onnx",
+  "tokens_path": "../artifacts/tokens.json",
+  "sample_rate": 16000,
+  "input": {
+    "features_name": "speech",
+    "lengths_name": null,
+    "shape": [1, -1, 560],
+    "dtype": "float32"
+  },
+  "output": {
+    "logits_name": "decoder_out",
+    "lengths_name": "token_lens",
+    "dtype": "float32"
+  },
+  "decoder": {
+    "type": "paraformer",
+    "blank_id": 0,
+    "special_token_ids": [0, 2, 3]
+  },
+  "frontend": {
+    "sample_rate": 16000,
+    "frame_length_ms": 25,
+    "frame_shift_ms": 10,
+    "fft_size": 512,
+    "mel_bins": 80,
+    "preemphasis": 0.97,
+    "spectrum": "power",
+    "lfr_m": 7,
+    "lfr_n": 6,
+    "lfr_padding": "edge",
+    "cmvn_means": [],
+    "cmvn_scales": []
+  }
+}
